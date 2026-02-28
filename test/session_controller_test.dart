@@ -6,6 +6,7 @@ import 'package:operation_jawline/session/session_step.dart';
 void main() {
   test('controller does not crash when restSec is null pattern', () {
     final controller = SessionController(
+      plannedWorkoutSec: 600,
       steps: const [
         SessionStep(
           id: 0,
@@ -29,6 +30,7 @@ void main() {
   test('pausing stops timer increments and resume continues', () {
     fakeAsync((async) {
       final controller = SessionController(
+        plannedWorkoutSec: 600,
         steps: const [
           SessionStep(
             id: 0,
@@ -59,6 +61,7 @@ void main() {
 
   test('endSession returns summary result object', () {
     final controller = SessionController(
+      plannedWorkoutSec: 600,
       steps: const [
         SessionStep(
           id: 0,

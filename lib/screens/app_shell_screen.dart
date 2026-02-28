@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../services/sfx_service.dart';
 import 'ai_workout_screen.dart';
@@ -40,7 +39,7 @@ class _AppShellScreenState extends State<AppShellScreen>
   }
 
   void _onTabSelected(int index) {
-    HapticFeedback.selectionClick();
+    SfxService.selection();
     SfxService.tap();
     _glitchController.forward(from: 0);
     setState(() => _tabIndex = index);

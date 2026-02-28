@@ -9,8 +9,10 @@ import '../models/daily_check_in.dart';
 import '../models/enums.dart';
 import '../services/mission_progress_service.dart';
 import '../services/sfx_service.dart';
+import '../settings/reminder_settings_controller.dart';
 import '../widgets/rise_in.dart';
 import '../widgets/recommendation_card.dart';
+import 'promotion_screen.dart';
 
 class DailyCheckInScreen extends StatefulWidget {
   const DailyCheckInScreen({super.key});
@@ -53,8 +55,15 @@ class _DailyCheckInScreenState extends State<DailyCheckInScreen> {
           final container = ProviderScope.containerOf(context, listen: false);
           final mission = container.read(missionServiceProvider);
           await mission.setDisciplineChain(state.snapshot.disciplineChain);
+          final latest = state.snapshot.latestCheckIn;
+          if (latest != null) {
+            await mission.appendCheckIn(latest);
+          }
           await mission.markCheckInDone(DateTime.now());
           final update = await mission.recomputeAndAwardXP(DateTime.now());
+          await container
+              .read(reminderSettingsProvider.notifier)
+              .rescheduleCheckInForNextDay();
           container.invalidate(todayMissionProvider);
           container.invalidate(userProgressProvider);
           if (!context.mounted) return;
@@ -64,6 +73,16 @@ class _DailyCheckInScreenState extends State<DailyCheckInScreen> {
             'TRANSMISSION LOGGED // +${update.xpDelta} XP (MISSION ${(update.dailyCompletion * 100).round()}%)',
             isError: false,
           );
+          if (update.promoted) {
+            await Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => PromotionScreen(
+                  previousRank: update.previousRankName,
+                  newRank: update.rankName,
+                ),
+              ),
+            );
+          }
           return;
         }
         if (state.status == MissionStatus.failure) {

@@ -6,6 +6,7 @@ import 'workout_item.dart';
 
 class WorkoutPlan extends Equatable {
   const WorkoutPlan({
+    this.templateId,
     required this.warmup,
     required this.main,
     this.finisher,
@@ -14,6 +15,7 @@ class WorkoutPlan extends Equatable {
     required this.explanations,
   });
 
+  final String? templateId;
   final List<WorkoutItem> warmup;
   final List<WorkoutItem> main;
   final WorkoutItem? finisher;
@@ -24,6 +26,7 @@ class WorkoutPlan extends Equatable {
   Map<String, dynamic> toMap() {
     return {
       'warmup': warmup.map((item) => item.toMap()).toList(),
+      'templateId': templateId,
       'main': main.map((item) => item.toMap()).toList(),
       'finisher': finisher?.toMap(),
       'cooldown': cooldown.map((item) => item.toMap()).toList(),
@@ -42,6 +45,7 @@ class WorkoutPlan extends Equatable {
 
     return WorkoutPlan(
       warmup: parseList(map['warmup']),
+      templateId: map['templateId'] as String?,
       main: parseList(map['main']),
       finisher: map['finisher'] == null
           ? null
@@ -61,6 +65,7 @@ class WorkoutPlan extends Equatable {
   @override
   List<Object?> get props => [
         warmup,
+        templateId,
         main,
         finisher,
         cooldown,

@@ -1,5 +1,7 @@
 import 'package:equatable/equatable.dart';
 
+import '../models/workout_status.dart';
+
 enum SessionStepKind { timed, set, rest }
 
 enum SessionPhase { warmup, main, finisher, cooldown, rest }
@@ -73,6 +75,10 @@ class SessionResult extends Equatable {
     required this.skippedSteps,
     required this.totalElapsedSec,
     required this.completionPercent,
+    required this.plannedSec,
+    required this.actualSec,
+    required this.effortRatio,
+    required this.status,
   });
 
   final int totalSteps;
@@ -80,6 +86,10 @@ class SessionResult extends Equatable {
   final int skippedSteps;
   final int totalElapsedSec;
   final double completionPercent;
+  final int plannedSec;
+  final int actualSec;
+  final double effortRatio;
+  final WorkoutStatus status;
 
   @override
   List<Object?> get props => [
@@ -88,5 +98,9 @@ class SessionResult extends Equatable {
         skippedSteps,
         totalElapsedSec,
         completionPercent,
+        plannedSec,
+        actualSec,
+        effortRatio,
+        status,
       ];
 }

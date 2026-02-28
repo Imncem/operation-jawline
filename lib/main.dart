@@ -6,6 +6,8 @@ import 'bloc/mission/mission_bloc.dart';
 import 'bloc/mission/mission_event.dart';
 import 'repository/local_mission_repository.dart';
 import 'screens/launch_splash_screen.dart';
+import 'settings/reminder_settings_controller.dart';
+import 'settings/settings_controller.dart';
 import 'theme/app_theme.dart';
 
 void main() {
@@ -13,11 +15,14 @@ void main() {
   runApp(const ProviderScope(child: OperationJawlineApp()));
 }
 
-class OperationJawlineApp extends StatelessWidget {
+class OperationJawlineApp extends ConsumerWidget {
   const OperationJawlineApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(feedbackSettingsProvider);
+    ref.watch(reminderSettingsProvider);
+
     return RepositoryProvider(
       create: (_) => LocalMissionRepository(),
       child: BlocProvider(

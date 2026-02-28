@@ -5,11 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../bloc/mission/mission_bloc.dart';
 import '../bloc/mission/mission_state.dart';
 import '../models/daily_check_in.dart';
+import '../progression/ranks.dart';
 import '../services/leveling.dart';
 import '../services/mission_progress_service.dart';
 import '../widgets/daily_mission_card.dart';
 import '../widgets/rise_in.dart';
 import '../widgets/rank_badge.dart';
+import 'intel_report_screen.dart';
+import 'settings_screen.dart';
 
 class MissionControlScreen extends StatelessWidget {
   const MissionControlScreen({super.key});
@@ -20,6 +23,8 @@ class MissionControlScreen extends StatelessWidget {
       builder: (context, state) {
         final snapshot = state.snapshot;
         final latest = snapshot.latestCheckIn;
+        final showChainAlert =
+            snapshot.chainCompromised && !_isSameCalendarDay(latest?.lastCheckIn);
 
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
@@ -33,7 +38,7 @@ class MissionControlScreen extends StatelessWidget {
             const SizedBox(height: 20),
 
             // ── Chain Compromised Alert ──────────────────────────────
-            if (snapshot.chainCompromised) ...[
+            if (showChainAlert) ...[
               RiseIn(
                 delay: const Duration(milliseconds: 40),
                 child: _ChainCompromisedAlert(),
@@ -44,60 +49,47 @@ class MissionControlScreen extends StatelessWidget {
             // ── Rank Badge ───────────────────────────────────────────
             RiseIn(
               delay: const Duration(milliseconds: 90),
-              child: _TacticalCard(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+              child: Consumer(
+                builder: (context, ref, _) {
+                  final progress = ref.watch(userProgressProvider).valueOrNull;
+                  final level = progress?.level ?? snapshot.disciplineChain;
+                  final rank = progress?.rankName ?? rankForLevel(level);
+                  final toNext = levelsToNextRank(level);
+                  return _TacticalCard(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _CornerTag(label: 'RANK'),
-                        const SizedBox(width: 10),
-                        Expanded(child: RankBadge(rank: snapshot.rank)),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        _CornerTag(label: 'LEVEL'),
-                        const SizedBox(width: 10),
+                        Row(
+                          children: [
+                            _CornerTag(label: 'RANK'),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: RankBadge(
+                                rank: rank,
+                                progress: inRankProgressForLevel(level),
+                                trailingText: 'LVL $level',
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
                         Text(
-                          'LVL ${snapshot.levelInRank}/${snapshot.levelCapInRank}',
-                          style: const TextStyle(
+                          toNext == 0
+                              ? 'TOP RANK TIER'
+                              : '$toNext LEVEL(S) TO NEXT RANK',
+                          style: TextStyle(
                             fontFamily: 'monospace',
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFFCDD4C0),
-                            letterSpacing: 1.6,
+                            fontSize: 8,
+                            color:
+                                const Color(0xFFCDD4C0).withValues(alpha: 0.55),
+                            letterSpacing: 1.2,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 6),
-                    ClipRect(
-                      child: LinearProgressIndicator(
-                        minHeight: 4,
-                        value: snapshot.levelProgress,
-                        backgroundColor:
-                            const Color(0xFFD4A017).withValues(alpha: 0.12),
-                        valueColor:
-                            const AlwaysStoppedAnimation(Color(0xFFD4A017)),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      snapshot.nextRank == null
-                          ? 'MAX RANK ACHIEVED'
-                          : '${snapshot.daysToNextRank} DAY(S) TO ${snapshot.nextRank!.toUpperCase()}',
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 8,
-                        color: const Color(0xFFCDD4C0).withValues(alpha: 0.55),
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ],
-                ),
+                  );
+                },
               ),
             ),
             const SizedBox(height: 16),
@@ -198,6 +190,39 @@ class MissionControlScreen extends StatelessWidget {
             const SizedBox(height: 20),
 
             // ── Footer timestamp ─────────────────────────────────────
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const IntelReportScreen(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.insights_outlined),
+                    label: const Text('Intel Report'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const SettingsScreen(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.settings_outlined),
+                    label: const Text('Settings'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+
             _TimestampFooter(
               latest: latest,
             ),
@@ -211,6 +236,14 @@ class MissionControlScreen extends StatelessWidget {
     final weight = checkIn?.weightKg;
     if (weight == null) return '--';
     return '${weight.toStringAsFixed(1)} KG';
+  }
+
+  static bool _isSameCalendarDay(DateTime? value) {
+    if (value == null) return false;
+    final now = DateTime.now();
+    return now.year == value.year &&
+        now.month == value.month &&
+        now.day == value.day;
   }
 }
 

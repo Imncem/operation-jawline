@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../bloc/mission/mission_bloc.dart';
 import '../bloc/mission/mission_state.dart';
 import '../models/enums.dart';
 import '../models/recommendation_response.dart';
 import '../models/workout_item.dart';
+import '../models/workout_status.dart';
+import '../services/mission_progress_service.dart';
 import '../services/sfx_service.dart';
 import '../session/session_step.dart';
 import '../services/workout_recommender.dart';
@@ -36,106 +38,116 @@ class AIWorkoutScreen extends StatelessWidget {
           disciplineChain: state.snapshot.disciplineChain,
         );
 
-        final recommendation = _recommender.recommend(checkIn);
-
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
-          children: [
-            // ── Header ───────────────────────────────────────────────
-            _TacticalSectionHeader(
-              tag: 'AI NEURAL INTERFACE',
-              title: 'ZENITH',
-              subtitle: 'Rule-based tactical programming from latest check-in.',
-            ),
-            const SizedBox(height: 20),
-
-            // ── Readiness Badge ──────────────────────────────────────
-            RiseIn(
-              delay: const Duration(milliseconds: 70),
-              child: _ReadinessBadge(recommendation: recommendation),
-            ),
-            const SizedBox(height: 20),
-
-            // ── Warm-up ──────────────────────────────────────────────
-            _PhaseHeader(tag: '01', label: 'WARM-UP PROTOCOL'),
-            const SizedBox(height: 10),
-            RiseIn(
-              delay: const Duration(milliseconds: 110),
-              child: _TacticalSectionCard(
-                  items: recommendation.workoutPlan.warmup),
-            ),
-            const SizedBox(height: 16),
-
-            // ── Main ─────────────────────────────────────────────────
-            _PhaseHeader(tag: '02', label: 'MAIN OBJECTIVE'),
-            const SizedBox(height: 10),
-            RiseIn(
-              delay: const Duration(milliseconds: 150),
-              child:
-                  _TacticalSectionCard(items: recommendation.workoutPlan.main),
-            ),
-
-            // ── Finisher ─────────────────────────────────────────────
-            if (recommendation.workoutPlan.finisher != null) ...[
-              const SizedBox(height: 16),
-              _PhaseHeader(tag: '03', label: 'FINISHER // OPTIONAL'),
-              const SizedBox(height: 10),
-              RiseIn(
-                delay: const Duration(milliseconds: 190),
-                child: _TacticalSectionCard(
-                  items: [recommendation.workoutPlan.finisher!],
-                  accent: _red,
+        return FutureBuilder<RecommendationResponse>(
+          future: _recommender.recommendWithProgress(checkIn),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final recommendation = snapshot.data!;
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
+              children: [
+                // ── Header ───────────────────────────────────────────────
+                _TacticalSectionHeader(
+                  tag: 'AI NEURAL INTERFACE',
+                  title: 'ZENITH',
+                  subtitle:
+                      'Rule-based tactical programming from latest check-in.',
                 ),
-              ),
-            ],
+                const SizedBox(height: 20),
 
-            // ── Cooldown ─────────────────────────────────────────────
-            const SizedBox(height: 16),
-            _PhaseHeader(
-                tag: recommendation.workoutPlan.finisher != null ? '04' : '03',
-                label: 'COOLDOWN PROTOCOL'),
-            const SizedBox(height: 10),
-            RiseIn(
-              delay: const Duration(milliseconds: 220),
-              child: _TacticalSectionCard(
-                items: recommendation.workoutPlan.cooldown,
-                accent: _blue,
-              ),
-            ),
-            const SizedBox(height: 16),
+                // ── Readiness Badge ──────────────────────────────────────
+                RiseIn(
+                  delay: const Duration(milliseconds: 70),
+                  child: _ReadinessBadge(recommendation: recommendation),
+                ),
+                const SizedBox(height: 20),
 
-            // ── Safety Notes ─────────────────────────────────────────
-            _BulletsDivider(label: 'SAFETY PROTOCOLS'),
-            const SizedBox(height: 10),
-            RiseIn(
-              delay: const Duration(milliseconds: 250),
-              child: _TacticalBulletsCard(
-                lines: recommendation.workoutPlan.safetyNotes,
-                accent: _red,
-                icon: Icons.shield_outlined,
-              ),
-            ),
-            const SizedBox(height: 16),
+                // ── Warm-up ──────────────────────────────────────────────
+                _PhaseHeader(tag: '01', label: 'WARM-UP PROTOCOL'),
+                const SizedBox(height: 10),
+                RiseIn(
+                  delay: const Duration(milliseconds: 110),
+                  child: _TacticalSectionCard(
+                      items: recommendation.workoutPlan.warmup),
+                ),
+                const SizedBox(height: 16),
 
-            // ── Why this plan ────────────────────────────────────────
-            _BulletsDivider(label: 'MISSION RATIONALE'),
-            const SizedBox(height: 10),
-            RiseIn(
-              delay: const Duration(milliseconds: 280),
-              child: _TacticalBulletsCard(
-                lines: recommendation.workoutPlan.explanations,
-                accent: _amber,
-                icon: Icons.psychology_outlined,
-              ),
-            ),
-            const SizedBox(height: 28),
+                // ── Main ─────────────────────────────────────────────────
+                _PhaseHeader(tag: '02', label: 'MAIN OBJECTIVE'),
+                const SizedBox(height: 10),
+                RiseIn(
+                  delay: const Duration(milliseconds: 150),
+                  child: _TacticalSectionCard(
+                      items: recommendation.workoutPlan.main),
+                ),
 
-            // ── CTA ──────────────────────────────────────────────────
-            RiseIn(
-              delay: const Duration(milliseconds: 320),
-              child: _LaunchButton(recommendation: recommendation),
-            ),
-          ],
+                // ── Finisher ─────────────────────────────────────────────
+                if (recommendation.workoutPlan.finisher != null) ...[
+                  const SizedBox(height: 16),
+                  _PhaseHeader(tag: '03', label: 'FINISHER // OPTIONAL'),
+                  const SizedBox(height: 10),
+                  RiseIn(
+                    delay: const Duration(milliseconds: 190),
+                    child: _TacticalSectionCard(
+                      items: [recommendation.workoutPlan.finisher!],
+                      accent: _red,
+                    ),
+                  ),
+                ],
+
+                // ── Cooldown ─────────────────────────────────────────────
+                const SizedBox(height: 16),
+                _PhaseHeader(
+                    tag: recommendation.workoutPlan.finisher != null
+                        ? '04'
+                        : '03',
+                    label: 'COOLDOWN PROTOCOL'),
+                const SizedBox(height: 10),
+                RiseIn(
+                  delay: const Duration(milliseconds: 220),
+                  child: _TacticalSectionCard(
+                    items: recommendation.workoutPlan.cooldown,
+                    accent: _blue,
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // ── Safety Notes ─────────────────────────────────────────
+                _BulletsDivider(label: 'SAFETY PROTOCOLS'),
+                const SizedBox(height: 10),
+                RiseIn(
+                  delay: const Duration(milliseconds: 250),
+                  child: _TacticalBulletsCard(
+                    lines: recommendation.workoutPlan.safetyNotes,
+                    accent: _red,
+                    icon: Icons.shield_outlined,
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // ── Why this plan ────────────────────────────────────────
+                _BulletsDivider(label: 'MISSION RATIONALE'),
+                const SizedBox(height: 10),
+                RiseIn(
+                  delay: const Duration(milliseconds: 280),
+                  child: _TacticalBulletsCard(
+                    lines: recommendation.workoutPlan.explanations,
+                    accent: _amber,
+                    icon: Icons.psychology_outlined,
+                  ),
+                ),
+                const SizedBox(height: 28),
+
+                // ── CTA ──────────────────────────────────────────────────
+                RiseIn(
+                  delay: const Duration(milliseconds: 320),
+                  child: _LaunchButton(recommendation: recommendation),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -699,46 +711,78 @@ class _LaunchButtonState extends State<_LaunchButton> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapUp: (_) {
-        setState(() => _pressed = false);
-        SfxService.tap();
-        _launch(context);
-      },
-      onTapCancel: () => setState(() => _pressed = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 100),
-        padding: const EdgeInsets.symmetric(vertical: 18),
-        decoration: BoxDecoration(
-          color: _pressed
-              ? _green.withValues(alpha: 0.2)
-              : _green.withValues(alpha: 0.1),
-          border: Border.all(color: _green, width: 1.5),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.play_arrow_rounded, color: _green, size: 18),
-            const SizedBox(width: 10),
-            const Text(
-              'INITIATE PROTOCOL',
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: _green,
-                letterSpacing: 3,
-              ),
+    return Column(
+      children: [
+        GestureDetector(
+          onTapDown: (_) => setState(() => _pressed = true),
+          onTapUp: (_) {
+            setState(() => _pressed = false);
+            SfxService.tap();
+            _launch(context);
+          },
+          onTapCancel: () => setState(() => _pressed = false),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 100),
+            padding: const EdgeInsets.symmetric(vertical: 18),
+            decoration: BoxDecoration(
+              color: _pressed
+                  ? _green.withValues(alpha: 0.2)
+                  : _green.withValues(alpha: 0.1),
+              border: Border.all(color: _green, width: 1.5),
             ),
-          ],
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.play_arrow_rounded, color: _green, size: 18),
+                const SizedBox(width: 10),
+                const Text(
+                  'INITIATE PROTOCOL',
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: _green,
+                    letterSpacing: 3,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
+        const SizedBox(height: 10),
+        OutlinedButton(
+          onPressed: () => _skipWorkout(context),
+          child: const Text('SKIP WORKOUT'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _skipWorkout(BuildContext context) async {
+    final container = ProviderScope.containerOf(context, listen: false);
+    final mission = container.read(missionServiceProvider);
+    await mission.updateWorkoutEffort(
+      DateTime.now(),
+      plannedSec: widget.recommendation.readiness.durationMinutes * 60,
+      actualSec: 0,
+      status: WorkoutStatus.skipped,
+      force: true,
+    );
+    final update = await mission.recomputeAndAwardXP(DateTime.now());
+    container.invalidate(todayMissionProvider);
+    container.invalidate(userProgressProvider);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+            '+${update.xpDelta} XP (Protocol effort: ${(update.workoutEffortRatio * 100).round()}%)'),
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }
 
   Future<void> _launch(BuildContext context) async {
-    HapticFeedback.mediumImpact();
+    SfxService.medium();
 
     final result = await Navigator.of(context).push<SessionResult>(
       MaterialPageRoute(

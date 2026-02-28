@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/daily_mission_record.dart';
+import '../models/workout_status.dart';
 
 class DailyMissionCard extends StatelessWidget {
   const DailyMissionCard({
@@ -62,10 +63,19 @@ class DailyMissionCard extends StatelessWidget {
                 ),
                 _StatusChip(
                   label: 'Workout: ${_workoutLabel(record)}',
-                  good: record.workoutPercent >= 0.99,
+                  good: record.workoutStatus.name == 'completed',
                 ),
               ],
             ),
+            if (record.workoutStatus.name != 'notStarted') ...[
+              const SizedBox(height: 8),
+              Text(
+                'Effort: ${(record.workoutEffortRatio * 100).round()}%',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             Text(
               'XP earned today: ${record.xpAwarded} / $xpMaxToday',
@@ -80,10 +90,7 @@ class DailyMissionCard extends StatelessWidget {
   }
 
   static String _workoutLabel(DailyMissionRecord record) {
-    if (record.workoutSkipped) return 'Skipped';
-    if (record.workoutPercent >= 0.99) return 'Completed';
-    if (record.workoutPercent > 0) return 'In progress';
-    return 'Not started';
+    return record.workoutStatus.label;
   }
 }
 

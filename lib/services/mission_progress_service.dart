@@ -5,7 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/daily_mission_record.dart';
+import '../models/daily_check_in.dart';
 import '../models/user_progress.dart';
+import '../models/workout_status.dart';
+import '../progression/ranks.dart';
 import 'leveling.dart';
 
 abstract class MissionStorageAdapter {
@@ -37,6 +40,14 @@ class MissionUpdateResult {
     required this.xpMaxToday,
     required this.xpToNextLevel,
     required this.progressToNextLevel,
+    required this.previousRankName,
+    required this.rankName,
+    required this.promoted,
+    required this.checkInXP,
+    required this.protocolXP,
+    required this.completionBonusXP,
+    required this.workoutEffortRatio,
+    required this.workoutStatus,
   });
 
   final int xpDelta;
@@ -47,6 +58,14 @@ class MissionUpdateResult {
   final int xpMaxToday;
   final int xpToNextLevel;
   final double progressToNextLevel;
+  final String previousRankName;
+  final String rankName;
+  final bool promoted;
+  final int checkInXP;
+  final int protocolXP;
+  final int completionBonusXP;
+  final double workoutEffortRatio;
+  final WorkoutStatus workoutStatus;
 }
 
 class MissionProgressService {
@@ -55,6 +74,7 @@ class MissionProgressService {
 
   static const String _recordsKey = 'daily_mission_records_v1';
   static const String _userProgressKey = 'user_progress_v1';
+  static const String _checkInHistoryKey = 'daily_checkin_history_v1';
 
   final MissionStorageAdapter _storage;
 
@@ -62,10 +82,45 @@ class MissionProgressService {
     return _getByDate(DateTime.now());
   }
 
+  Future<List<DailyMissionRecord>> loadMissionRecordHistory() async {
+    final all = await _loadAllRecords();
+    final values = all.values.toList()
+      ..sort((a, b) => a.dateKey.compareTo(b.dateKey));
+    return values;
+  }
+
   Future<UserProgress> getUserProgress() async {
     final raw = await _storage.getString(_userProgressKey);
     if (raw == null || raw.isEmpty) return UserProgress.initial();
-    return UserProgress.fromMap(jsonDecode(raw) as Map<String, dynamic>);
+    final parsed =
+        UserProgress.fromMap(jsonDecode(raw) as Map<String, dynamic>);
+    return parsed.copyWith(rankName: rankForLevel(parsed.level));
+  }
+
+  Future<void> appendCheckIn(DailyCheckIn checkIn) async {
+    final all = await loadCheckInHistory();
+    final next = [...all];
+    final idx = next.indexWhere(
+        (it) => _dateKey(it.lastCheckIn) == _dateKey(checkIn.lastCheckIn));
+    if (idx >= 0) {
+      next[idx] = checkIn;
+    } else {
+      next.add(checkIn);
+    }
+    await _storage.setString(
+      _checkInHistoryKey,
+      jsonEncode(next.map((e) => e.toMap()).toList()),
+    );
+  }
+
+  Future<List<DailyCheckIn>> loadCheckInHistory() async {
+    final raw = await _storage.getString(_checkInHistoryKey);
+    if (raw == null || raw.isEmpty) return const [];
+    final list = jsonDecode(raw) as List<dynamic>;
+    return list
+        .map((e) => DailyCheckIn.fromMap(e as Map<String, dynamic>))
+        .toList()
+      ..sort((a, b) => a.lastCheckIn.compareTo(b.lastCheckIn));
   }
 
   Future<void> setDisciplineChain(int chain) async {
@@ -89,16 +144,49 @@ class MissionProgressService {
     double percent, {
     bool skipped = false,
   }) async {
+    final status = skipped ? WorkoutStatus.skipped : WorkoutStatus.inProgress;
+    final planned = 1000;
+    final actual = (planned * percent.clamp(0, 1)).round();
+    await updateWorkoutEffort(
+      date,
+      plannedSec: planned,
+      actualSec: actual,
+      status: status,
+      force: true,
+    );
+  }
+
+  Future<void> updateWorkoutEffort(
+    DateTime date, {
+    required int plannedSec,
+    required int actualSec,
+    required WorkoutStatus status,
+    bool force = false,
+  }) async {
     final record = await _getByDate(date);
-    final normalized = percent.clamp(0.0, 1.0);
-    final floor =
-        (skipped && kApplyWorkoutSkipFloor) ? kWorkoutSkipPercentFloor : 0.0;
-    final mergedPercent =
-        math.max(record.workoutPercent, math.max(normalized, floor));
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final nextPlanned =
+        math.max(record.plannedWorkoutSec, math.max(0, plannedSec));
+    final nextActual =
+        math.max(record.actualWorkoutSec, math.max(0, actualSec));
+    var nextRatio =
+        nextPlanned <= 0 ? 0.0 : (nextActual / nextPlanned).clamp(0.0, 1.0);
+    if (status == WorkoutStatus.completed && nextRatio < 1.0) {
+      nextRatio = 1.0;
+    }
+
+    final allowByTime = nowMs - record.lastWorkoutUpdateTs >= 2000;
+    final allowByRatio = (nextRatio - record.workoutEffortRatio).abs() >= 0.05;
+    if (!force && !allowByTime && !allowByRatio) {
+      return;
+    }
 
     final updated = record.copyWith(
-      workoutPercent: mergedPercent,
-      workoutSkipped: record.workoutSkipped || skipped,
+      plannedWorkoutSec: nextPlanned,
+      actualWorkoutSec: nextActual,
+      workoutEffortRatio: nextRatio,
+      workoutStatus: status,
+      lastWorkoutUpdateTs: nowMs,
     );
     await _saveRecord(updated);
   }
@@ -106,25 +194,40 @@ class MissionProgressService {
   Future<MissionUpdateResult> recomputeAndAwardXP(DateTime date) async {
     final record = await _getByDate(date);
     final progress = await getUserProgress();
-
-    final completion = computeDailyMissionCompletion(
+    final workoutCredit = computeWorkoutCredit(
+      status: record.workoutStatus,
+      effortRatio: record.workoutEffortRatio,
+    );
+    final completion = computeDailyCompletionFromWorkoutCredit(
       checkInDone: record.checkInDone,
-      workoutCompletionPercent: record.workoutPercent,
-      workoutSkipped: record.workoutSkipped,
+      workoutCredit: workoutCredit,
+    );
+    final checkInXP =
+        record.checkInDone ? (kCheckInWeight * kBaseDailyXP).round() : 0;
+    final protocolXP = (kWorkoutWeight * workoutCredit * kBaseDailyXP).round();
+    final completionBonusXP = computeCompletionBonusXP(
+      status: record.workoutStatus,
+      effortRatio: record.workoutEffortRatio,
+      dailyCompletion: completion,
     );
 
     final xpTarget = computeDailyXP(
       dailyMissionCompletion: completion,
       disciplineChain: progress.disciplineChain,
+      completionBonusXP: completionBonusXP,
     );
     final xpMaxToday = computeDailyXP(
       dailyMissionCompletion: 1.0,
       disciplineChain: progress.disciplineChain,
+      completionBonusXP: kCompletionBonusFull,
     );
 
     final xpDelta = math.max(0, xpTarget - record.xpAwarded);
     final newTotal = progress.totalXP + xpDelta;
     final newLevel = computeLevelFromTotalXP(newTotal);
+    final previousRankName = progress.rankName;
+    final rankName = rankForLevel(newLevel);
+    final promoted = xpDelta > 0 && previousRankName != rankName;
     final nextXp = xpToNextLevel(newTotal);
     final nextProgress = progressToNextLevel(newTotal);
 
@@ -135,6 +238,7 @@ class MissionProgressService {
     final updatedUser = progress.copyWith(
       totalXP: newTotal,
       level: newLevel,
+      rankName: rankName,
     );
 
     await _saveRecord(updatedRecord);
@@ -149,6 +253,14 @@ class MissionProgressService {
       xpMaxToday: xpMaxToday,
       xpToNextLevel: nextXp,
       progressToNextLevel: nextProgress,
+      previousRankName: previousRankName,
+      rankName: rankName,
+      promoted: promoted,
+      checkInXP: checkInXP,
+      protocolXP: protocolXP,
+      completionBonusXP: completionBonusXP,
+      workoutEffortRatio: record.workoutEffortRatio,
+      workoutStatus: record.workoutStatus,
     );
   }
 
@@ -199,4 +311,13 @@ final todayMissionProvider = FutureProvider<DailyMissionRecord>((ref) async {
 
 final userProgressProvider = FutureProvider<UserProgress>((ref) async {
   return ref.watch(missionServiceProvider).getUserProgress();
+});
+
+final checkInHistoryProvider = FutureProvider<List<DailyCheckIn>>((ref) async {
+  return ref.watch(missionServiceProvider).loadCheckInHistory();
+});
+
+final missionHistoryProvider =
+    FutureProvider<List<DailyMissionRecord>>((ref) async {
+  return ref.watch(missionServiceProvider).loadMissionRecordHistory();
 });

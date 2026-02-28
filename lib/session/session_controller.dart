@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../models/workout_status.dart';
+import 'time_accounting.dart';
 import 'session_step.dart';
 
 class SessionState {
@@ -14,10 +16,17 @@ class SessionState {
     required this.elapsedSec,
     required this.isPaused,
     required this.isCompleted,
+    required this.transitionMessage,
+    required this.plannedWorkoutSec,
+    required this.actualWorkoutSec,
+    required this.currentSetCountedSec,
     this.result,
   });
 
-  factory SessionState.initial(List<SessionStep> steps) {
+  factory SessionState.initial(
+    List<SessionStep> steps, {
+    required int plannedWorkoutSec,
+  }) {
     final first = steps.isEmpty ? null : steps.first;
     final firstDuration =
         first?.isTimed == true ? (first!.durationSec ?? 0) : 0;
@@ -31,6 +40,10 @@ class SessionState {
       elapsedSec: 0,
       isPaused: false,
       isCompleted: steps.isEmpty,
+      transitionMessage: 'Protocol activated',
+      plannedWorkoutSec: plannedWorkoutSec,
+      actualWorkoutSec: 0,
+      currentSetCountedSec: 0,
       result: steps.isEmpty
           ? const SessionResult(
               totalSteps: 0,
@@ -38,6 +51,10 @@ class SessionState {
               skippedSteps: 0,
               totalElapsedSec: 0,
               completionPercent: 0,
+              plannedSec: 0,
+              actualSec: 0,
+              effortRatio: 0,
+              status: WorkoutStatus.notStarted,
             )
           : null,
     );
@@ -51,6 +68,10 @@ class SessionState {
   final int elapsedSec;
   final bool isPaused;
   final bool isCompleted;
+  final String transitionMessage;
+  final int plannedWorkoutSec;
+  final int actualWorkoutSec;
+  final int currentSetCountedSec;
   final SessionResult? result;
 
   SessionStep? get currentStep =>
@@ -68,6 +89,10 @@ class SessionState {
 
   int get skippedSteps =>
       outcomes.where((outcome) => outcome == StepOutcome.skipped).length;
+
+  double get effortRatio => plannedWorkoutSec <= 0
+      ? 0
+      : (actualWorkoutSec / plannedWorkoutSec).clamp(0, 1);
 
   double get stepProgressWithinCurrent {
     if (isCompleted || totalSteps == 0) return 1;
@@ -128,6 +153,10 @@ class SessionState {
     int? elapsedSec,
     bool? isPaused,
     bool? isCompleted,
+    String? transitionMessage,
+    int? plannedWorkoutSec,
+    int? actualWorkoutSec,
+    int? currentSetCountedSec,
     SessionResult? result,
     bool clearResult = false,
   }) {
@@ -142,14 +171,23 @@ class SessionState {
       elapsedSec: elapsedSec ?? this.elapsedSec,
       isPaused: isPaused ?? this.isPaused,
       isCompleted: isCompleted ?? this.isCompleted,
+      transitionMessage: transitionMessage ?? this.transitionMessage,
+      plannedWorkoutSec: plannedWorkoutSec ?? this.plannedWorkoutSec,
+      actualWorkoutSec: actualWorkoutSec ?? this.actualWorkoutSec,
+      currentSetCountedSec: currentSetCountedSec ?? this.currentSetCountedSec,
       result: clearResult ? null : (result ?? this.result),
     );
   }
 }
 
 class SessionController extends ChangeNotifier {
-  SessionController({required List<SessionStep> steps})
-      : _state = SessionState.initial(steps) {
+  SessionController({
+    required List<SessionStep> steps,
+    required int plannedWorkoutSec,
+  }) : _state = SessionState.initial(
+          steps,
+          plannedWorkoutSec: plannedWorkoutSec,
+        ) {
     _ensureTicker();
   }
 
@@ -206,6 +244,8 @@ class SessionController extends ChangeNotifier {
       currentStepRemainingSec:
           previousStep.isTimed ? (previousStep.durationSec ?? 0) : 0,
       currentStepElapsedSec: 0,
+      transitionMessage: 'Back: ${previousStep.name}',
+      currentSetCountedSec: 0,
       clearResult: true,
     );
     notifyListeners();
@@ -222,7 +262,7 @@ class SessionController extends ChangeNotifier {
       _state = _state.copyWith(outcomes: outcomes);
     }
 
-    final result = _buildResult();
+    final result = _buildResult(status: WorkoutStatus.aborted);
     _state = _state.copyWith(isCompleted: true, isPaused: true, result: result);
     notifyListeners();
     return result;
@@ -236,12 +276,14 @@ class SessionController extends ChangeNotifier {
 
     final nextIndex = _state.currentIndex + 1;
     if (nextIndex >= _state.totalSteps) {
-      final result = _buildResult(outcomesOverride: outcomes);
+      final result = _buildResult(
+          outcomesOverride: outcomes, status: WorkoutStatus.completed);
       _state = _state.copyWith(
         outcomes: outcomes,
         currentIndex: _state.totalSteps,
         currentStepRemainingSec: 0,
         currentStepElapsedSec: 0,
+        currentSetCountedSec: 0,
         isCompleted: true,
         isPaused: true,
         result: result,
@@ -257,18 +299,24 @@ class SessionController extends ChangeNotifier {
       currentStepRemainingSec:
           nextStep.isTimed ? (nextStep.durationSec ?? 0) : 0,
       currentStepElapsedSec: 0,
+      currentSetCountedSec: 0,
+      transitionMessage: _transitionMessageFor(nextStep),
     );
     _ensureTicker();
     notifyListeners();
   }
 
-  SessionResult _buildResult({List<StepOutcome>? outcomesOverride}) {
+  SessionResult _buildResult({
+    List<StepOutcome>? outcomesOverride,
+    required WorkoutStatus status,
+  }) {
     final outcomes = outcomesOverride ?? _state.outcomes;
     final completed =
         outcomes.where((it) => it == StepOutcome.completed).length;
     final skipped = outcomes.where((it) => it == StepOutcome.skipped).length;
     final total = _state.totalSteps;
     final completionPercent = total == 0 ? 0.0 : (completed / total);
+    final ratio = status == WorkoutStatus.completed ? 1.0 : _state.effortRatio;
 
     return SessionResult(
       totalSteps: total,
@@ -276,11 +324,22 @@ class SessionController extends ChangeNotifier {
       skippedSteps: skipped,
       totalElapsedSec: _state.elapsedSec,
       completionPercent: completionPercent,
+      plannedSec: _state.plannedWorkoutSec,
+      actualSec: _state.actualWorkoutSec,
+      effortRatio: ratio,
+      status: status,
     );
   }
 
   void _ensureTicker() {
     _ticker ??= Timer.periodic(const Duration(seconds: 1), (_) => _onTick());
+  }
+
+  String _transitionMessageFor(SessionStep step) {
+    if (step.phase == SessionPhase.cooldown) return 'Cooldown initiated';
+    if (step.phase == SessionPhase.warmup) return 'Warm-up continues';
+    if (step.kind == SessionStepKind.rest) return 'Maintain control';
+    return 'Next: ${step.name}';
   }
 
   void _onTick() {
@@ -291,8 +350,21 @@ class SessionController extends ChangeNotifier {
     var nextElapsed = _state.elapsedSec + 1;
     var stepRemaining = _state.currentStepRemainingSec;
     var stepElapsed = _state.currentStepElapsedSec;
+    var nextActual = _state.actualWorkoutSec;
+    var nextSetCounted = _state.currentSetCountedSec;
 
     final current = _state.currentStep;
+    if (current != null) {
+      if (current.kind == SessionStepKind.set) {
+        if (nextSetCounted < kMaxSetStepCountedSec) {
+          nextSetCounted += 1;
+          nextActual += 1;
+        }
+      } else {
+        nextActual += 1;
+      }
+    }
+
     if (current != null && current.isTimed) {
       stepRemaining = (stepRemaining - 1).clamp(0, 1 << 20);
       stepElapsed = stepElapsed + 1;
@@ -302,6 +374,8 @@ class SessionController extends ChangeNotifier {
           elapsedSec: nextElapsed,
           currentStepRemainingSec: 0,
           currentStepElapsedSec: stepElapsed,
+          actualWorkoutSec: nextActual,
+          currentSetCountedSec: nextSetCounted,
         );
         _markCurrentAndAdvance(StepOutcome.completed);
         return;
@@ -312,6 +386,8 @@ class SessionController extends ChangeNotifier {
       elapsedSec: nextElapsed,
       currentStepRemainingSec: stepRemaining,
       currentStepElapsedSec: stepElapsed,
+      actualWorkoutSec: nextActual,
+      currentSetCountedSec: nextSetCounted,
     );
     notifyListeners();
   }

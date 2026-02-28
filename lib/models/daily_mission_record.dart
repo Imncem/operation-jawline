@@ -1,46 +1,66 @@
+import 'workout_status.dart';
+
 class DailyMissionRecord {
   const DailyMissionRecord({
     required this.dateKey,
     required this.checkInDone,
-    required this.workoutPercent,
-    required this.workoutSkipped,
     required this.xpAwarded,
     required this.completion,
+    required this.plannedWorkoutSec,
+    required this.actualWorkoutSec,
+    required this.workoutEffortRatio,
+    required this.workoutStatus,
+    required this.lastWorkoutUpdateTs,
   });
 
   factory DailyMissionRecord.empty(String dateKey) {
     return DailyMissionRecord(
       dateKey: dateKey,
       checkInDone: false,
-      workoutPercent: 0,
-      workoutSkipped: false,
       xpAwarded: 0,
       completion: 0,
+      plannedWorkoutSec: 0,
+      actualWorkoutSec: 0,
+      workoutEffortRatio: 0,
+      workoutStatus: WorkoutStatus.notStarted,
+      lastWorkoutUpdateTs: 0,
     );
   }
 
   final String dateKey;
   final bool checkInDone;
-  final double workoutPercent;
-  final bool workoutSkipped;
   final int xpAwarded;
   final double completion;
+  final int plannedWorkoutSec;
+  final int actualWorkoutSec;
+  final double workoutEffortRatio;
+  final WorkoutStatus workoutStatus;
+  final int lastWorkoutUpdateTs;
+
+  double get workoutPercent => workoutEffortRatio;
+  bool get workoutSkipped => workoutStatus == WorkoutStatus.skipped;
 
   DailyMissionRecord copyWith({
     String? dateKey,
     bool? checkInDone,
-    double? workoutPercent,
-    bool? workoutSkipped,
     int? xpAwarded,
     double? completion,
+    int? plannedWorkoutSec,
+    int? actualWorkoutSec,
+    double? workoutEffortRatio,
+    WorkoutStatus? workoutStatus,
+    int? lastWorkoutUpdateTs,
   }) {
     return DailyMissionRecord(
       dateKey: dateKey ?? this.dateKey,
       checkInDone: checkInDone ?? this.checkInDone,
-      workoutPercent: workoutPercent ?? this.workoutPercent,
-      workoutSkipped: workoutSkipped ?? this.workoutSkipped,
       xpAwarded: xpAwarded ?? this.xpAwarded,
       completion: completion ?? this.completion,
+      plannedWorkoutSec: plannedWorkoutSec ?? this.plannedWorkoutSec,
+      actualWorkoutSec: actualWorkoutSec ?? this.actualWorkoutSec,
+      workoutEffortRatio: workoutEffortRatio ?? this.workoutEffortRatio,
+      workoutStatus: workoutStatus ?? this.workoutStatus,
+      lastWorkoutUpdateTs: lastWorkoutUpdateTs ?? this.lastWorkoutUpdateTs,
     );
   }
 
@@ -48,21 +68,38 @@ class DailyMissionRecord {
     return {
       'dateKey': dateKey,
       'checkInDone': checkInDone,
-      'workoutPercent': workoutPercent,
-      'workoutSkipped': workoutSkipped,
       'xpAwarded': xpAwarded,
       'completion': completion,
+      'plannedWorkoutSec': plannedWorkoutSec,
+      'actualWorkoutSec': actualWorkoutSec,
+      'workoutEffortRatio': workoutEffortRatio,
+      'workoutStatus': workoutStatus.toJsonValue(),
+      'lastWorkoutUpdateTs': lastWorkoutUpdateTs,
     };
   }
 
   factory DailyMissionRecord.fromMap(Map<String, dynamic> map) {
+    final legacyPercent = (map['workoutPercent'] as num?)?.toDouble() ?? 0;
+    final legacySkipped = map['workoutSkipped'] as bool? ?? false;
+    final fallbackStatus = legacySkipped
+        ? WorkoutStatus.skipped
+        : legacyPercent > 0
+            ? WorkoutStatus.inProgress
+            : WorkoutStatus.notStarted;
+
     return DailyMissionRecord(
       dateKey: map['dateKey'] as String,
       checkInDone: map['checkInDone'] as bool? ?? false,
-      workoutPercent: (map['workoutPercent'] as num?)?.toDouble() ?? 0,
-      workoutSkipped: map['workoutSkipped'] as bool? ?? false,
       xpAwarded: map['xpAwarded'] as int? ?? 0,
       completion: (map['completion'] as num?)?.toDouble() ?? 0,
+      plannedWorkoutSec: map['plannedWorkoutSec'] as int? ?? 0,
+      actualWorkoutSec: map['actualWorkoutSec'] as int? ?? 0,
+      workoutEffortRatio:
+          (map['workoutEffortRatio'] as num?)?.toDouble() ?? legacyPercent,
+      workoutStatus: map.containsKey('workoutStatus')
+          ? WorkoutStatusX.fromJsonValue(map['workoutStatus'] as String?)
+          : fallbackStatus,
+      lastWorkoutUpdateTs: map['lastWorkoutUpdateTs'] as int? ?? 0,
     );
   }
 }

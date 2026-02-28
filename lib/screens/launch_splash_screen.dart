@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../services/app_settings_service.dart';
+import '../services/sfx_service.dart';
+import '../settings/settings_repo.dart';
 import 'app_shell_screen.dart';
+import 'onboarding_screen.dart';
 
 class LaunchSplashScreen extends StatefulWidget {
   const LaunchSplashScreen({super.key});
@@ -43,11 +47,20 @@ class _LaunchSplashScreenState extends State<LaunchSplashScreen>
     await Future<void>.delayed(const Duration(milliseconds: 450));
     await _fadeController.forward();
     if (!mounted) return;
+    final settings = await AppSettingsService().load();
+    final feedback = await SettingsRepo().load();
+    if (!mounted) return;
+    SfxService.configure(
+      soundEnabled: feedback.soundEnabled,
+      hapticsOn: feedback.hapticsEnabled,
+    );
 
     Navigator.of(context).pushReplacement(
       PageRouteBuilder<void>(
         transitionDuration: const Duration(milliseconds: 280),
-        pageBuilder: (_, __, ___) => const AppShellScreen(),
+        pageBuilder: (_, __, ___) => settings.onboardingShown
+            ? const AppShellScreen()
+            : const OnboardingScreen(),
         transitionsBuilder: (_, animation, __, child) =>
             FadeTransition(opacity: animation, child: child),
       ),

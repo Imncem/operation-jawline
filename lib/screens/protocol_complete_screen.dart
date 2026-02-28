@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/workout_status.dart';
 import '../services/mission_progress_service.dart';
 import '../services/sfx_service.dart';
+import '../settings/reminder_settings_controller.dart';
+import '../session/time_accounting.dart';
 import '../session/session_step.dart';
+import 'promotion_screen.dart';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const _amber = Color(0xFFD4A017);
@@ -34,7 +37,7 @@ class _ProtocolCompleteScreenState extends State<ProtocolCompleteScreen>
   @override
   void initState() {
     super.initState();
-    HapticFeedback.heavyImpact();
+    SfxService.heavy();
 
     _entryController = AnimationController(
       vsync: this,
@@ -67,6 +70,7 @@ class _ProtocolCompleteScreenState extends State<ProtocolCompleteScreen>
     final percent = (result.completionPercent * 100).round();
     final isPerfect = percent == 100;
     final accentColor = isPerfect ? _green : _amber;
+    final debriefText = _buildDebriefText(result);
 
     return Scaffold(
       backgroundColor: _bg,
@@ -92,6 +96,7 @@ class _ProtocolCompleteScreenState extends State<ProtocolCompleteScreen>
                   isPerfect: isPerfect,
                   accentColor: accentColor,
                   glowController: _glowController,
+                  debriefText: debriefText,
                 ),
                 const SizedBox(height: 28),
 
@@ -102,6 +107,8 @@ class _ProtocolCompleteScreenState extends State<ProtocolCompleteScreen>
                 // ── Stats Grid ───────────────────────────────────────
                 _StatsGrid(result: result, accentColor: accentColor),
                 const SizedBox(height: 20),
+                _EffortStrip(result: result),
+                const SizedBox(height: 14),
 
                 // ── Completion Bar ───────────────────────────────────
                 _CompletionBar(
@@ -111,7 +118,17 @@ class _ProtocolCompleteScreenState extends State<ProtocolCompleteScreen>
                 if (_missionUpdate != null) ...[
                   const SizedBox(height: 12),
                   Text(
-                    'MISSION XP: +${_missionUpdate!.xpDelta}  |  TODAY ${_missionUpdate!.xpToday}/${_missionUpdate!.xpMaxToday}',
+                    'Check-in XP: +${_missionUpdate!.checkInXP}  Protocol XP: +${_missionUpdate!.protocolXP}  Bonus: +${_missionUpdate!.completionBonusXP}',
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 10,
+                      color: _text.withValues(alpha: 0.6),
+                      letterSpacing: 1.1,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'TOTAL TODAY: ${_missionUpdate!.xpToday} / ${_missionUpdate!.xpMaxToday}',
                     style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 10,
@@ -141,6 +158,16 @@ class _ProtocolCompleteScreenState extends State<ProtocolCompleteScreen>
         ),
       ),
     );
+  }
+
+  String _buildDebriefText(SessionResult result) {
+    if (result.completionPercent >= 0.99 && result.skippedSteps == 0) {
+      return 'Perfect execution. All objectives completed with zero skips.';
+    }
+    if (result.skippedSteps > 0) {
+      return 'Debrief: objectives were skipped. Re-run protocol to tighten discipline.';
+    }
+    return 'Solid partial completion. Build consistency and push the next session.';
   }
 
   PreferredSizeWidget _buildAppBar() {
@@ -195,12 +222,19 @@ class _ProtocolCompleteScreenState extends State<ProtocolCompleteScreen>
   Future<void> _syncFinalMissionProgress() async {
     final container = ProviderScope.containerOf(context, listen: false);
     final mission = container.read(missionServiceProvider);
-    await mission.updateWorkoutProgress(
+    await mission.updateWorkoutEffort(
       DateTime.now(),
-      widget.result.completionPercent,
-      skipped: widget.result.skippedSteps > 0,
+      plannedSec: widget.result.plannedSec,
+      actualSec: widget.result.actualSec,
+      status: widget.result.status,
+      force: true,
     );
     final update = await mission.recomputeAndAwardXP(DateTime.now());
+    if (widget.result.status == WorkoutStatus.completed) {
+      await container
+          .read(reminderSettingsProvider.notifier)
+          .rescheduleWorkoutForNextDay();
+    }
     container.invalidate(todayMissionProvider);
     container.invalidate(userProgressProvider);
     if (!mounted) return;
@@ -214,6 +248,16 @@ class _ProtocolCompleteScreenState extends State<ProtocolCompleteScreen>
         ),
       );
     }
+    if (update.promoted && mounted) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PromotionScreen(
+            previousRank: update.previousRankName,
+            newRank: update.rankName,
+          ),
+        ),
+      );
+    }
   }
 }
 
@@ -224,12 +268,14 @@ class _MissionResultHeader extends StatelessWidget {
   final bool isPerfect;
   final Color accentColor;
   final AnimationController glowController;
+  final String debriefText;
 
   const _MissionResultHeader({
     required this.percent,
     required this.isPerfect,
     required this.accentColor,
     required this.glowController,
+    required this.debriefText,
   });
 
   @override
@@ -314,9 +360,7 @@ class _MissionResultHeader extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                isPerfect
-                    ? 'All objectives achieved. Discipline maintained.'
-                    : 'Protocol concluded. Progress logged.',
+                debriefText,
                 style: TextStyle(
                   fontFamily: 'monospace',
                   fontSize: 9,
@@ -364,6 +408,49 @@ class _SectionDivider extends StatelessWidget {
 }
 
 // ─── Stats Grid ───────────────────────────────────────────────────────────────
+
+class _EffortStrip extends StatelessWidget {
+  const _EffortStrip({required this.result});
+
+  final SessionResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final effortPct = (result.effortRatio * 100).round();
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _surface,
+        border: Border.all(color: _amber.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'PROTOCOL EFFORT: $effortPct%',
+            style: const TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 11,
+              color: _amber,
+              letterSpacing: 1.6,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'TIME ON TARGET: ${formatMmSs(result.actualSec)} / ${formatMmSs(result.plannedSec)}',
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 10,
+              color: _text.withValues(alpha: 0.7),
+              letterSpacing: 1.0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _StatsGrid extends StatelessWidget {
   final SessionResult result;
@@ -630,7 +717,7 @@ class _ReturnButtonState extends State<_ReturnButton> {
       onTapDown: (_) => setState(() => _pressed = true),
       onTapUp: (_) {
         setState(() => _pressed = false);
-        HapticFeedback.selectionClick();
+        SfxService.selection();
         SfxService.tap();
         Navigator.of(context).pop(widget.result);
       },

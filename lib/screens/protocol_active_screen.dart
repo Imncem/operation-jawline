@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/recommendation_response.dart';
@@ -10,6 +9,10 @@ import '../services/sfx_service.dart';
 import '../session/session_builder.dart';
 import '../session/session_controller.dart';
 import '../session/session_step.dart';
+import '../session/time_accounting.dart';
+import '../zenith/workout_progression.dart';
+import '../models/workout_status.dart';
+import 'promotion_screen.dart';
 import 'protocol_complete_screen.dart';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -44,13 +47,29 @@ class _ProtocolActiveScreenState extends State<ProtocolActiveScreen>
   double _lastMissionSyncProgress = 0;
   bool _missionSyncInFlight = false;
   bool _missionCompletionToastSent = false;
+  final WorkoutProgressionRepository _progressRepository =
+      WorkoutProgressionRepository();
+  int? _lastStepId;
+  int _countdownValue = 0;
+  bool _countdownActive = false;
+  bool _protocolStartNotified = false;
+  bool _sessionFinishNotified = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    final steps = SessionBuilder().build(widget.recommendation.workoutPlan);
-    _controller = SessionController(steps: steps);
+    final plan = widget.recommendation.workoutPlan;
+    final steps = SessionBuilder().build(plan);
+    final plannedSec = estimatePlannedWorkoutSec(
+      plan,
+      steps,
+      targetDurationMinutes: widget.recommendation.readiness.durationMinutes,
+    );
+    _controller = SessionController(
+      steps: steps,
+      plannedWorkoutSec: plannedSec,
+    );
     _controller.addListener(_onSessionTick);
 
     _pulseController = AnimationController(
@@ -60,6 +79,13 @@ class _ProtocolActiveScreenState extends State<ProtocolActiveScreen>
 
     _progressController = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 600));
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_protocolStartNotified) {
+        _protocolStartNotified = true;
+        SfxService.play('start.wav', volume: 0.8);
+      }
+    });
   }
 
   @override
@@ -94,11 +120,17 @@ class _ProtocolActiveScreenState extends State<ProtocolActiveScreen>
 
   void _onSessionTick() {
     final state = _controller.state;
-    final progress = state.overallProgress.clamp(0.0, 1.0);
+    _handleStepTransition(state);
+    if (state.isCompleted && !_sessionFinishNotified) {
+      _sessionFinishNotified = true;
+      SfxService.success();
+      SfxService.play('complete.wav', volume: 0.8);
+    }
+    final effort = state.effortRatio.clamp(0.0, 1.0);
     final now = DateTime.now();
     final dueByTime =
         now.difference(_lastMissionSyncAt) >= const Duration(seconds: 2);
-    final dueByProgress = (progress - _lastMissionSyncProgress).abs() >= 0.05;
+    final dueByProgress = (effort - _lastMissionSyncProgress).abs() >= 0.05;
     final shouldSync = !_missionSyncInFlight &&
         (state.isCompleted || dueByTime || dueByProgress);
     if (!shouldSync) return;
@@ -106,37 +138,118 @@ class _ProtocolActiveScreenState extends State<ProtocolActiveScreen>
     _missionSyncInFlight = true;
     unawaited(
       _syncMissionProgress(
-        progress,
-        skipped: state.skippedSteps > 0,
+        effort,
+        status: state.isCompleted
+            ? state.result?.status ?? WorkoutStatus.completed
+            : WorkoutStatus.inProgress,
         notifyOnCompletion: state.isCompleted && !_missionCompletionToastSent,
       ),
     );
   }
 
+  void _handleStepTransition(SessionState state) {
+    final step = state.currentStep;
+    if (step == null) return;
+    if (_lastStepId == step.id) return;
+
+    SessionStep? previous;
+    if (_lastStepId != null) {
+      for (final item in state.steps) {
+        if (item.id == _lastStepId) {
+          previous = item;
+          break;
+        }
+      }
+    }
+    if (previous != null) {
+      SfxService.play('changing.wav');
+      if (previous.kind == SessionStepKind.rest) {
+        SfxService.play('alert.wav', volume: 0.8);
+      }
+    }
+    _lastStepId = step.id;
+
+    if (step.isTimed && !state.isCompleted) {
+      _startCountdown();
+    }
+  }
+
+  Future<void> _startCountdown() async {
+    if (_countdownActive) return;
+    _countdownActive = true;
+    _countdownValue = 3;
+    _controller.pause();
+    SfxService.play('changing.wav', volume: 0.75);
+    if (mounted) setState(() {});
+    while (_countdownValue > 0 && mounted) {
+      await Future<void>.delayed(const Duration(seconds: 1));
+      _countdownValue -= 1;
+      if (_countdownValue > 0) {
+        SfxService.play('changing.wav', volume: 0.75);
+      } else {
+        SfxService.play('start.wav', volume: 0.85);
+      }
+      if (mounted) setState(() {});
+    }
+    _countdownActive = false;
+    if (mounted) setState(() {});
+    _controller.resume();
+  }
+
   Future<void> _syncMissionProgress(
-    double progress, {
-    required bool skipped,
+    double effortRatio, {
+    required WorkoutStatus status,
     required bool notifyOnCompletion,
   }) async {
     try {
       final container = _providerContainer ??
           ProviderScope.containerOf(context, listen: false);
       final mission = container.read(missionServiceProvider);
-      await mission.updateWorkoutProgress(DateTime.now(), progress,
-          skipped: skipped);
+      final s = _controller.state;
+      await mission.updateWorkoutEffort(
+        DateTime.now(),
+        plannedSec: s.plannedWorkoutSec,
+        actualSec: s.actualWorkoutSec,
+        status: status,
+      );
       final update = await mission.recomputeAndAwardXP(DateTime.now());
       _lastMissionSyncAt = DateTime.now();
-      _lastMissionSyncProgress = progress;
+      _lastMissionSyncProgress = effortRatio;
       container.invalidate(todayMissionProvider);
       container.invalidate(userProgressProvider);
 
       if (notifyOnCompletion && mounted && update.xpDelta > 0) {
         _missionCompletionToastSent = true;
+        final effortPct = (update.workoutEffortRatio * 100).round();
+        final msg = status == WorkoutStatus.aborted
+            ? '+${update.xpDelta} XP (Protocol effort: $effortPct%)'
+            : '+${update.xpDelta} XP (Mission ${(update.dailyCompletion * 100).round()}%)';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-                '+${update.xpDelta} XP (Mission ${(update.dailyCompletion * 100).round()}%)'),
+            content: Text(msg),
             behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+
+      if (notifyOnCompletion && mounted && update.promoted) {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => PromotionScreen(
+              previousRank: update.previousRankName,
+              newRank: update.rankName,
+            ),
+          ),
+        );
+      }
+
+      if (notifyOnCompletion) {
+        await _progressRepository.save(
+          WorkoutProgressMemory(
+            templateId: widget.recommendation.workoutPlan.templateId ?? '',
+            completed: status == WorkoutStatus.completed,
+            hadSafetyFlags:
+                widget.recommendation.readiness.riskFlags.isNotEmpty,
           ),
         );
       }
@@ -177,8 +290,11 @@ class _ProtocolActiveScreenState extends State<ProtocolActiveScreen>
           backgroundColor: _bg,
           appBar: _buildAppBar(state),
           body: SafeArea(
+            bottom: false,
             child: Column(
               children: [
+                _PhaseBanner(phase: current?.phase),
+                _TransitionTicker(message: state.transitionMessage),
                 // ── HUD Progress Strip ───────────────────────────────
                 _HudProgressStrip(
                   progressController: _progressController,
@@ -191,27 +307,52 @@ class _ProtocolActiveScreenState extends State<ProtocolActiveScreen>
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                    child: current == null
-                        ? _NoStepsPlaceholder()
-                        : _CurrentStepCard(
-                            state: state,
-                            pulseController: _pulseController,
-                            onCompleteSet: () {
-                              HapticFeedback.mediumImpact();
-                              SfxService.tap();
-                              _controller.completeSet();
-                            },
-                            onTogglePause: () {
-                              HapticFeedback.selectionClick();
-                              SfxService.tap();
-                              _controller.togglePause();
-                            },
-                            onSkip: () {
-                              HapticFeedback.lightImpact();
-                              SfxService.tap();
-                              _controller.skipCurrentStep();
-                            },
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: current == null
+                              ? _NoStepsPlaceholder()
+                              : _CurrentStepCard(
+                                  state: state,
+                                  pulseController: _pulseController,
+                                  onCompleteSet: () {
+                                    SfxService.medium();
+                                    SfxService.tap();
+                                    _controller.completeSet();
+                                  },
+                                  onTogglePause: () {
+                                    SfxService.selection();
+                                    SfxService.tap();
+                                    _controller.togglePause();
+                                  },
+                                  onSkip: () {
+                                    SfxService.light();
+                                    SfxService.tap();
+                                    _controller.skipCurrentStep();
+                                  },
+                                ),
+                        ),
+                        if (_countdownActive)
+                          Positioned.fill(
+                            child: Container(
+                              color: Colors.black54,
+                              alignment: Alignment.center,
+                              child: Text(
+                                _countdownValue == 0
+                                    ? 'START'
+                                    : '$_countdownValue',
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 56,
+                                  fontWeight: FontWeight.w900,
+                                  color: _amber,
+                                  letterSpacing: 6,
+                                ),
+                              ),
+                            ),
                           ),
+                      ],
+                    ),
                   ),
                 ),
 
@@ -222,17 +363,17 @@ class _ProtocolActiveScreenState extends State<ProtocolActiveScreen>
                 _ControlBar(
                   state: state,
                   onPrevious: () {
-                    HapticFeedback.selectionClick();
+                    SfxService.selection();
                     SfxService.tap();
                     _controller.previousStep();
                   },
                   onTogglePause: () {
-                    HapticFeedback.selectionClick();
+                    SfxService.selection();
                     SfxService.tap();
                     _controller.togglePause();
                   },
                   onSkip: () {
-                    HapticFeedback.lightImpact();
+                    SfxService.light();
                     SfxService.tap();
                     _controller.skipCurrentStep();
                   },
@@ -330,7 +471,7 @@ class _ProtocolActiveScreenState extends State<ProtocolActiveScreen>
   }
 
   Future<void> _confirmEndSession() async {
-    HapticFeedback.heavyImpact();
+    SfxService.heavy();
     final shouldEnd = await showDialog<bool>(
       context: context,
       builder: (context) => Dialog(
@@ -454,6 +595,62 @@ class _ProtocolActiveScreenState extends State<ProtocolActiveScreen>
 }
 
 // ─── HUD Progress Strip ───────────────────────────────────────────────────────
+
+class _PhaseBanner extends StatelessWidget {
+  const _PhaseBanner({required this.phase});
+
+  final SessionPhase? phase;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = switch (phase) {
+      SessionPhase.warmup => 'WARM-UP',
+      SessionPhase.main || SessionPhase.finisher => 'MAIN PROTOCOL',
+      SessionPhase.cooldown => 'COOLDOWN',
+      SessionPhase.rest => 'RECOVERY',
+      null => 'PROTOCOL',
+    };
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      color: _surface,
+      child: Text(
+        label,
+        style: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 11,
+          letterSpacing: 2.5,
+          color: _amber.withValues(alpha: 0.9),
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _TransitionTicker extends StatelessWidget {
+  const _TransitionTicker({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      color: _surface.withValues(alpha: 0.6),
+      child: Text(
+        message,
+        style: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 10,
+          color: _text.withValues(alpha: 0.75),
+          letterSpacing: 1.2,
+        ),
+      ),
+    );
+  }
+}
 
 class _HudProgressStrip extends StatelessWidget {
   final AnimationController progressController;
@@ -689,7 +886,7 @@ class _CurrentStepCard extends StatelessWidget {
                     )
                   else
                     _TacticalButton(
-                      label: 'SKIP REST',
+                      label: 'SKIP >',
                       icon: Icons.fast_forward_rounded,
                       accent: _amber,
                       onTap: onSkip,
@@ -1126,7 +1323,7 @@ class _ControlBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
       color: const Color(0xFF0D0F0D),
       child: Column(
         children: [
@@ -1134,8 +1331,9 @@ class _ControlBar extends StatelessWidget {
           Row(
             children: [
               _ControlButton(
-                label: '◂ PREV',
+                label: '< PREV',
                 enabled: state.currentIndex > 0,
+                accent: _text,
                 onTap: onPrevious,
               ),
               const SizedBox(width: 8),
@@ -1146,7 +1344,8 @@ class _ControlBar extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               _ControlButton(
-                label: 'SKIP ▸',
+                label: 'SKIP >',
+                accent: _blue,
                 onTap: onSkip,
               ),
             ],
@@ -1202,7 +1401,7 @@ class _ControlButtonState extends State<_ControlButton> {
 
   @override
   Widget build(BuildContext context) {
-    final accent = widget.accent ?? _dim;
+    final accent = widget.accent ?? _text;
     final enabled = widget.enabled;
 
     return Expanded(
@@ -1220,12 +1419,15 @@ class _ControlButtonState extends State<_ControlButton> {
           duration: const Duration(milliseconds: 80),
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color:
-                _pressed ? accent.withValues(alpha: 0.15) : Colors.transparent,
+            color: enabled
+                ? (_pressed
+                    ? accent.withValues(alpha: 0.18)
+                    : accent.withValues(alpha: 0.06))
+                : Colors.transparent,
             border: Border.all(
               color: enabled
-                  ? accent.withValues(alpha: 0.4)
-                  : _dim.withValues(alpha: 0.2),
+                  ? accent.withValues(alpha: 0.65)
+                  : _dim.withValues(alpha: 0.25),
             ),
           ),
           child: Center(
@@ -1234,7 +1436,7 @@ class _ControlButtonState extends State<_ControlButton> {
               style: TextStyle(
                 fontFamily: 'monospace',
                 fontSize: 9,
-                color: enabled ? accent : _dim.withValues(alpha: 0.3),
+                color: enabled ? accent : _dim.withValues(alpha: 0.35),
                 letterSpacing: 2,
                 fontWeight: FontWeight.bold,
               ),

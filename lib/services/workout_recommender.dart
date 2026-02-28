@@ -5,13 +5,23 @@ import '../models/recommendation_response.dart';
 import '../models/readiness_result.dart';
 import '../models/workout_item.dart';
 import '../models/workout_plan.dart';
+import '../zenith/workout_progression.dart';
 import 'readiness_service.dart';
 
 class WorkoutRecommender {
-  WorkoutRecommender({ReadinessService? readinessService})
-      : _readinessService = readinessService ?? const ReadinessService();
+  WorkoutRecommender({
+    ReadinessService? readinessService,
+    WorkoutProgressionRepository? progressionRepository,
+    WorkoutProgressionEngine? progressionEngine,
+  })  : _readinessService = readinessService ?? const ReadinessService(),
+        _progressionRepository =
+            progressionRepository ?? WorkoutProgressionRepository(),
+        _progressionEngine =
+            progressionEngine ?? const WorkoutProgressionEngine();
 
   final ReadinessService _readinessService;
+  final WorkoutProgressionRepository _progressionRepository;
+  final WorkoutProgressionEngine _progressionEngine;
 
   RecommendationResponse recommend(DailyCheckIn? checkIn) {
     if (checkIn == null || !_isValid(checkIn)) {
@@ -31,6 +41,21 @@ class WorkoutRecommender {
     );
 
     return RecommendationResponse(readiness: readiness, workoutPlan: plan);
+  }
+
+  Future<RecommendationResponse> recommendWithProgress(
+      DailyCheckIn? checkIn) async {
+    final base = recommend(checkIn);
+    if (checkIn == null) return base;
+    final memory = await _progressionRepository.load();
+    final progressedPlan = _progressionEngine.apply(
+      plan: base.workoutPlan,
+      readiness: base.readiness,
+      templateId: base.workoutPlan.templateId ?? '',
+      memory: memory,
+    );
+    return RecommendationResponse(
+        readiness: base.readiness, workoutPlan: progressedPlan);
   }
 
   bool _isValid(DailyCheckIn checkIn) {
@@ -155,6 +180,7 @@ class WorkoutRecommender {
     }
 
     return WorkoutPlan(
+      templateId: templateKey,
       warmup: toItems('warmup'),
       main: toItems('main'),
       finisher: finisherMap == null ? null : WorkoutItem.fromMap(finisherMap),

@@ -51,7 +51,7 @@ void main() {
     final afterCheckIn = await service.recomputeAndAwardXP(now);
 
     expect(workoutOnly.xpToday, 30);
-    expect(afterCheckIn.xpDelta, 50);
-    expect(afterCheckIn.xpToday, 80);
+    expect(afterCheckIn.xpDelta, 55);
+    expect(afterCheckIn.xpToday, 85);
   });
 }
