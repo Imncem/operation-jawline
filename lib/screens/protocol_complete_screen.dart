@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/workout_status.dart';
+import '../providers/phase3_providers.dart';
 import '../services/mission_progress_service.dart';
 import '../services/sfx_service.dart';
 import '../settings/reminder_settings_controller.dart';
@@ -227,9 +228,34 @@ class _ProtocolCompleteScreenState extends State<ProtocolCompleteScreen>
       plannedSec: widget.result.plannedSec,
       actualSec: widget.result.actualSec,
       status: widget.result.status,
+      lane: widget.result.lane,
       force: true,
     );
     final update = await mission.recomputeAndAwardXP(DateTime.now());
+    final missionHistory = await mission.loadMissionRecordHistory();
+    final checkInHistory = await mission.loadCheckInHistory();
+    final weeklyUpdate =
+        await container.read(weeklyObjectiveServiceProvider).refresh(
+              now: DateTime.now(),
+              missions: missionHistory,
+              checkIns: checkInHistory,
+            );
+    if (weeklyUpdate.rewardGranted) {
+      await mission.awardBonusXP(weeklyUpdate.rewardXP, date: DateTime.now());
+    }
+    final progress = await mission.getUserProgress();
+    await container.read(personalRecordsServiceProvider).recomputeAndSave(
+          missions: missionHistory,
+          bestChain: progress.bestChain,
+        );
+    await container.read(medalServiceProvider).evaluateAndSave(
+          missions: missionHistory,
+          checkIns: checkInHistory,
+          progress: progress,
+          currentObjective: weeklyUpdate.objective,
+          objectiveArchive: weeklyUpdate.archive,
+          dateKey: _dateKey(DateTime.now()),
+        );
     if (widget.result.status == WorkoutStatus.completed) {
       await container
           .read(reminderSettingsProvider.notifier)
@@ -237,6 +263,11 @@ class _ProtocolCompleteScreenState extends State<ProtocolCompleteScreen>
     }
     container.invalidate(todayMissionProvider);
     container.invalidate(userProgressProvider);
+    container.invalidate(medalsStateProvider);
+    container.invalidate(weeklyObjectiveProvider);
+    container.invalidate(weeklyObjectiveArchiveProvider);
+    container.invalidate(personalRecordsProvider);
+    container.invalidate(serviceRecordProvider);
     if (!mounted) return;
     setState(() => _missionUpdate = update);
     if (update.xpDelta > 0) {
@@ -258,6 +289,10 @@ class _ProtocolCompleteScreenState extends State<ProtocolCompleteScreen>
         ),
       );
     }
+  }
+
+  String _dateKey(DateTime date) {
+    return '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 }
 

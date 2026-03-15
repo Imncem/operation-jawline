@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../intel/insight_engine.dart';
+import '../intel/zenith_intelligence_engine.dart';
 import '../models/daily_check_in.dart';
 import '../models/daily_mission_record.dart';
+import '../models/zenith_adjustment.dart';
+import '../models/zenith_analysis_result.dart';
 import '../services/mission_progress_service.dart';
 import '../services/sfx_service.dart';
 import '../widgets/line_chart_card.dart';
@@ -28,6 +31,7 @@ class IntelReportScreen extends ConsumerStatefulWidget {
 class _IntelReportScreenState extends ConsumerState<IntelReportScreen> {
   int _days = 7;
   final _insightEngine = const InsightEngine();
+  final _zenithEngine = const ZenithIntelligenceEngine();
 
   @override
   Widget build(BuildContext context) {
@@ -130,6 +134,11 @@ class _IntelReportScreenState extends ConsumerState<IntelReportScreen> {
       checkIns: recentCheckIns,
       missionRecords: recentMissions,
     );
+    final intelligence = _zenithEngine.analyze(
+      checkIns: checkIns,
+      missionRecords: missions,
+      windowDays: _days,
+    );
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
@@ -139,6 +148,10 @@ class _IntelReportScreenState extends ConsumerState<IntelReportScreen> {
           tag: 'BIOMETRIC TRENDS',
           subtitle: 'Last $_days days of field data',
         ),
+        const SizedBox(height: 16),
+        _ZenithAnalysisCard(analysis: intelligence.analysis),
+        const SizedBox(height: 12),
+        _RecommendedAdjustmentCard(adjustment: intelligence.adjustment),
         const SizedBox(height: 16),
 
         // ── Charts ────────────────────────────────────────────────
@@ -150,6 +163,9 @@ class _IntelReportScreenState extends ConsumerState<IntelReportScreen> {
             title: 'Weight',
             values: recentCheckIns.map((e) => e.weightKg ?? 0).toList(),
             color: _amber,
+            decimals: 1,
+            interpretation:
+                'Use this for direction, not daily noise. A steady trend over 7-30 days is more meaningful than single-day spikes.',
           ),
         ),
         const SizedBox(height: 12),
@@ -162,6 +178,9 @@ class _IntelReportScreenState extends ConsumerState<IntelReportScreen> {
             title: 'Energy',
             values: recentCheckIns.map((e) => e.energy.toDouble()).toList(),
             color: _green,
+            decimals: 0,
+            interpretation:
+                'Higher energy usually supports harder training lanes. If this trends down, bias recovery and sleep quality.',
           ),
         ),
         const SizedBox(height: 12),
@@ -174,6 +193,9 @@ class _IntelReportScreenState extends ConsumerState<IntelReportScreen> {
             title: 'Hydration',
             values: recentCheckIns.map((e) => e.waterLiters).toList(),
             color: _blue,
+            decimals: 1,
+            interpretation:
+                'Aim for consistent intake across the week. Large swings often align with lower readiness and recovery quality.',
           ),
         ),
         const SizedBox(height: 12),
@@ -186,6 +208,9 @@ class _IntelReportScreenState extends ConsumerState<IntelReportScreen> {
             title: 'Puffiness',
             values: recentCheckIns.map((e) => e.puffiness.toDouble()).toList(),
             color: _red,
+            decimals: 0,
+            interpretation:
+                'Lower is better here. Rising puffiness can signal recovery strain, poor sleep, or hydration inconsistency.',
           ),
         ),
         const SizedBox(height: 12),
@@ -198,6 +223,9 @@ class _IntelReportScreenState extends ConsumerState<IntelReportScreen> {
             title: 'Mission Completion %',
             values: recentMissions.map((e) => e.completion * 100).toList(),
             color: _amber,
+            decimals: 0,
+            interpretation:
+                'This shows execution consistency. 80%+ across most days indicates stable discipline and protocol adherence.',
           ),
         ),
         const SizedBox(height: 24),
@@ -513,6 +541,224 @@ class _InsightsCard extends StatelessWidget {
             ),
           );
         }),
+      ),
+    );
+  }
+}
+
+class _ZenithAnalysisCard extends StatelessWidget {
+  const _ZenithAnalysisCard({required this.analysis});
+
+  final ZenithAnalysisResult analysis;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _surface,
+        border: Border.all(color: _amber.withValues(alpha: 0.2)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'ZENITH ANALYSIS',
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 10,
+                color: _amber,
+                letterSpacing: 3,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'OPERATIONAL INTERPRETATION OF RECENT TELEMETRY',
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 9,
+                color: _text.withValues(alpha: 0.45),
+                letterSpacing: 1.5,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              analysis.summaryTitle,
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: _text,
+                letterSpacing: 1.5,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              analysis.summaryText,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 11,
+                color: _text.withValues(alpha: 0.72),
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ...analysis.bulletInsights.map(
+              (item) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '> ',
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 10,
+                        color: _amber.withValues(alpha: 0.7),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        item,
+                        style: TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 10,
+                          color: _text.withValues(alpha: 0.68),
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 6),
+              height: 1,
+              color: _amber.withValues(alpha: 0.12),
+            ),
+            Text(
+              analysis.recommendedActionTitle,
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 11,
+                color: _amber,
+                letterSpacing: 2,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              analysis.recommendedActionText,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 10,
+                color: _text.withValues(alpha: 0.72),
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                'CONFIDENCE ${analysis.confidenceLabel.toUpperCase()}',
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 9,
+                  color: _amber.withValues(alpha: 0.7),
+                  letterSpacing: 2,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RecommendedAdjustmentCard extends StatelessWidget {
+  const _RecommendedAdjustmentCard({required this.adjustment});
+
+  final ZenithAdjustment adjustment;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _surface,
+        border: Border.all(color: _amber.withValues(alpha: 0.2)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'RECOMMENDED ADJUSTMENT',
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 10,
+                color: _amber,
+                letterSpacing: 3,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _AdjustmentChip(
+                  label:
+                      'Lane ${adjustment.laneOverrideSuggestion?.label ?? 'Neutral'}',
+                ),
+                _AdjustmentChip(
+                  label:
+                      'Focus ${adjustment.focusSuggestion?.label ?? 'Baseline'}',
+                ),
+                _AdjustmentChip(
+                  label: adjustment.durationDeltaMin == 0
+                      ? 'Duration 0m'
+                      : 'Duration ${adjustment.durationDeltaMin > 0 ? '+' : ''}${adjustment.durationDeltaMin}m',
+                ),
+                _AdjustmentChip(
+                  label: adjustment.restrictHighIntensity
+                      ? 'HI restricted'
+                      : 'HI available',
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AdjustmentChip extends StatelessWidget {
+  const _AdjustmentChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: _amber.withValues(alpha: 0.08),
+        border: Border.all(color: _amber.withValues(alpha: 0.22)),
+      ),
+      child: Text(
+        label.toUpperCase(),
+        style: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 9,
+          color: _text.withValues(alpha: 0.75),
+          letterSpacing: 1.2,
+        ),
       ),
     );
   }

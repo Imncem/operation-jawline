@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/daily_mission_record.dart';
 import '../models/daily_check_in.dart';
+import '../models/enums.dart';
+import '../models/promotion_history_entry.dart';
 import '../models/user_progress.dart';
 import '../models/workout_status.dart';
 import '../progression/ranks.dart';
@@ -68,6 +70,24 @@ class MissionUpdateResult {
   final WorkoutStatus workoutStatus;
 }
 
+class ProgressAwardResult {
+  const ProgressAwardResult({
+    required this.xpDelta,
+    required this.newTotalXP,
+    required this.level,
+    required this.previousRankName,
+    required this.rankName,
+    required this.promoted,
+  });
+
+  final int xpDelta;
+  final int newTotalXP;
+  final int level;
+  final String previousRankName;
+  final String rankName;
+  final bool promoted;
+}
+
 class MissionProgressService {
   MissionProgressService({required MissionStorageAdapter storage})
       : _storage = storage;
@@ -91,10 +111,24 @@ class MissionProgressService {
 
   Future<UserProgress> getUserProgress() async {
     final raw = await _storage.getString(_userProgressKey);
-    if (raw == null || raw.isEmpty) return UserProgress.initial();
+    if (raw == null || raw.isEmpty) {
+      final initial = UserProgress.initial().copyWith(
+        joinDateKey: _dateKey(DateTime.now()),
+      );
+      await _saveUserProgress(initial);
+      return initial;
+    }
     final parsed =
         UserProgress.fromMap(jsonDecode(raw) as Map<String, dynamic>);
-    return parsed.copyWith(rankName: rankForLevel(parsed.level));
+    final normalized = parsed.copyWith(
+      rankName: rankForLevel(parsed.level),
+      joinDateKey: parsed.joinDateKey ?? _dateKey(DateTime.now()),
+    );
+    if (normalized.joinDateKey != parsed.joinDateKey ||
+        normalized.rankName != parsed.rankName) {
+      await _saveUserProgress(normalized);
+    }
+    return normalized;
   }
 
   Future<void> appendCheckIn(DailyCheckIn checkIn) async {
@@ -126,7 +160,11 @@ class MissionProgressService {
   Future<void> setDisciplineChain(int chain) async {
     final progress = await getUserProgress();
     await _saveUserProgress(
-        progress.copyWith(disciplineChain: math.max(0, chain)));
+      progress.copyWith(
+        disciplineChain: math.max(0, chain),
+        bestChain: math.max(progress.bestChain, math.max(0, chain)),
+      ),
+    );
   }
 
   Future<void> markCheckInDone(DateTime date) async {
@@ -136,7 +174,13 @@ class MissionProgressService {
     await _saveRecord(updated);
 
     final progress = await getUserProgress();
-    await _saveUserProgress(progress.copyWith(lastCheckInDateKey: dateKey));
+    await _saveUserProgress(
+      progress.copyWith(
+        lastCheckInDateKey: dateKey,
+        joinDateKey: progress.joinDateKey ?? dateKey,
+        bestChain: math.max(progress.bestChain, progress.disciplineChain),
+      ),
+    );
   }
 
   Future<void> updateWorkoutProgress(
@@ -161,6 +205,7 @@ class MissionProgressService {
     required int plannedSec,
     required int actualSec,
     required WorkoutStatus status,
+    TrainingLane? lane,
     bool force = false,
   }) async {
     final record = await _getByDate(date);
@@ -187,8 +232,50 @@ class MissionProgressService {
       workoutEffortRatio: nextRatio,
       workoutStatus: status,
       lastWorkoutUpdateTs: nowMs,
+      workoutLane: lane ?? record.workoutLane,
     );
     await _saveRecord(updated);
+  }
+
+  Future<ProgressAwardResult> awardBonusXP(
+    int xp, {
+    DateTime? date,
+  }) async {
+    final safeXp = math.max(0, xp);
+    final progress = await getUserProgress();
+    final previousRankName = progress.rankName;
+    final newTotal = progress.totalXP + safeXp;
+    final level = computeLevelFromTotalXP(newTotal);
+    final rankName = rankForLevel(level);
+    final promoted = safeXp > 0 && previousRankName != rankName;
+    final nextPromotionHistory = promoted
+        ? [
+            ...progress.promotionHistory,
+            PromotionHistoryEntry(
+              dateKey: _dateKey(date ?? DateTime.now()),
+              fromRank: previousRankName,
+              toRank: rankName,
+            ),
+          ]
+        : progress.promotionHistory;
+
+    await _saveUserProgress(
+      progress.copyWith(
+        totalXP: newTotal,
+        level: level,
+        rankName: rankName,
+        promotionHistory: nextPromotionHistory,
+      ),
+    );
+
+    return ProgressAwardResult(
+      xpDelta: safeXp,
+      newTotalXP: newTotal,
+      level: level,
+      previousRankName: previousRankName,
+      rankName: rankName,
+      promoted: promoted,
+    );
   }
 
   Future<MissionUpdateResult> recomputeAndAwardXP(DateTime date) async {
@@ -231,6 +318,17 @@ class MissionProgressService {
     final nextXp = xpToNextLevel(newTotal);
     final nextProgress = progressToNextLevel(newTotal);
 
+    final nextPromotionHistory = promoted
+        ? [
+            ...progress.promotionHistory,
+            PromotionHistoryEntry(
+              dateKey: _dateKey(date),
+              fromRank: previousRankName,
+              toRank: rankName,
+            ),
+          ]
+        : progress.promotionHistory;
+
     final updatedRecord = record.copyWith(
       completion: completion,
       xpAwarded: record.xpAwarded + xpDelta,
@@ -239,6 +337,9 @@ class MissionProgressService {
       totalXP: newTotal,
       level: newLevel,
       rankName: rankName,
+      joinDateKey: progress.joinDateKey ?? _dateKey(date),
+      bestChain: math.max(progress.bestChain, progress.disciplineChain),
+      promotionHistory: nextPromotionHistory,
     );
 
     await _saveRecord(updatedRecord);

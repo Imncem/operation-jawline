@@ -7,6 +7,7 @@ import '../bloc/mission/mission_event.dart';
 import '../bloc/mission/mission_state.dart';
 import '../models/daily_check_in.dart';
 import '../models/enums.dart';
+import '../providers/phase3_providers.dart';
 import '../services/mission_progress_service.dart';
 import '../services/sfx_service.dart';
 import '../settings/reminder_settings_controller.dart';
@@ -61,11 +62,41 @@ class _DailyCheckInScreenState extends State<DailyCheckInScreen> {
           }
           await mission.markCheckInDone(DateTime.now());
           final update = await mission.recomputeAndAwardXP(DateTime.now());
+          final missionHistory = await mission.loadMissionRecordHistory();
+          final checkInHistory = await mission.loadCheckInHistory();
+          final progress = await mission.getUserProgress();
+          final weeklyUpdate =
+              await container.read(weeklyObjectiveServiceProvider).refresh(
+                    now: DateTime.now(),
+                    missions: missionHistory,
+                    checkIns: checkInHistory,
+                  );
+          if (weeklyUpdate.rewardGranted) {
+            await mission.awardBonusXP(weeklyUpdate.rewardXP,
+                date: DateTime.now());
+          }
+          await container.read(personalRecordsServiceProvider).recomputeAndSave(
+                missions: missionHistory,
+                bestChain: progress.bestChain,
+              );
+          await container.read(medalServiceProvider).evaluateAndSave(
+                missions: missionHistory,
+                checkIns: checkInHistory,
+                progress: await mission.getUserProgress(),
+                currentObjective: weeklyUpdate.objective,
+                objectiveArchive: weeklyUpdate.archive,
+                dateKey: _dateKey(DateTime.now()),
+              );
           await container
               .read(reminderSettingsProvider.notifier)
               .rescheduleCheckInForNextDay();
           container.invalidate(todayMissionProvider);
           container.invalidate(userProgressProvider);
+          container.invalidate(medalsStateProvider);
+          container.invalidate(weeklyObjectiveProvider);
+          container.invalidate(weeklyObjectiveArchiveProvider);
+          container.invalidate(personalRecordsProvider);
+          container.invalidate(serviceRecordProvider);
           if (!context.mounted) return;
 
           _showTacticalSnackBar(
@@ -73,6 +104,13 @@ class _DailyCheckInScreenState extends State<DailyCheckInScreen> {
             'TRANSMISSION LOGGED // +${update.xpDelta} XP (MISSION ${(update.dailyCompletion * 100).round()}%)',
             isError: false,
           );
+          if (weeklyUpdate.rewardGranted) {
+            _showTacticalSnackBar(
+              context,
+              'COMMENDATION EARNED // +${weeklyUpdate.rewardXP} XP',
+              isError: false,
+            );
+          }
           if (update.promoted) {
             await Navigator.of(context).push(
               MaterialPageRoute(
@@ -278,6 +316,10 @@ class _DailyCheckInScreenState extends State<DailyCheckInScreen> {
     );
 
     context.read<MissionBloc>().add(CheckInSubmitted(checkIn));
+  }
+
+  String _dateKey(DateTime date) {
+    return '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 }
 

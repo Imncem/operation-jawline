@@ -1,27 +1,46 @@
 import '../data/workout_templates.dart';
+import '../intel/zenith_intelligence_engine.dart';
 import '../models/daily_check_in.dart';
+import '../models/daily_mission_record.dart';
 import '../models/enums.dart';
 import '../models/recommendation_response.dart';
 import '../models/readiness_result.dart';
 import '../models/workout_item.dart';
 import '../models/workout_plan.dart';
+import '../models/zenith_adjustment.dart';
+import '../models/zenith_analysis_result.dart';
 import '../zenith/workout_progression.dart';
+import 'mission_progress_service.dart';
 import 'readiness_service.dart';
 
 class WorkoutRecommender {
   WorkoutRecommender({
     ReadinessService? readinessService,
+    MissionProgressService? missionProgressService,
     WorkoutProgressionRepository? progressionRepository,
     WorkoutProgressionEngine? progressionEngine,
+    ZenithIntelligenceEngine? intelligenceEngine,
+    Future<List<DailyCheckIn>> Function()? checkInHistoryLoader,
+    Future<List<DailyMissionRecord>> Function()? missionHistoryLoader,
   })  : _readinessService = readinessService ?? const ReadinessService(),
+        _missionProgressService = missionProgressService ??
+            MissionProgressService(storage: SharedPrefsMissionStorageAdapter()),
         _progressionRepository =
             progressionRepository ?? WorkoutProgressionRepository(),
         _progressionEngine =
-            progressionEngine ?? const WorkoutProgressionEngine();
+            progressionEngine ?? const WorkoutProgressionEngine(),
+        _intelligenceEngine =
+            intelligenceEngine ?? const ZenithIntelligenceEngine(),
+        _checkInHistoryLoader = checkInHistoryLoader,
+        _missionHistoryLoader = missionHistoryLoader;
 
   final ReadinessService _readinessService;
+  final MissionProgressService _missionProgressService;
   final WorkoutProgressionRepository _progressionRepository;
   final WorkoutProgressionEngine _progressionEngine;
+  final ZenithIntelligenceEngine _intelligenceEngine;
+  final Future<List<DailyCheckIn>> Function()? _checkInHistoryLoader;
+  final Future<List<DailyMissionRecord>> Function()? _missionHistoryLoader;
 
   RecommendationResponse recommend(DailyCheckIn? checkIn) {
     if (checkIn == null || !_isValid(checkIn)) {
@@ -31,7 +50,7 @@ class WorkoutRecommender {
     final readiness = _readinessService.calculate(checkIn);
     final explanations = _buildExplanations(checkIn, readiness);
 
-    final templateKey = _pickTemplate(checkIn, readiness);
+    final templateKey = _pickTemplate(checkIn, readiness, null);
     final plan = _planFromTemplate(
       templateKey,
       explanations: explanations,
@@ -45,7 +64,7 @@ class WorkoutRecommender {
 
   Future<RecommendationResponse> recommendWithProgress(
       DailyCheckIn? checkIn) async {
-    final base = recommend(checkIn);
+    final base = await recommendWithIntelligence(checkIn);
     if (checkIn == null) return base;
     final memory = await _progressionRepository.load();
     final progressedPlan = _progressionEngine.apply(
@@ -55,7 +74,56 @@ class WorkoutRecommender {
       memory: memory,
     );
     return RecommendationResponse(
-        readiness: base.readiness, workoutPlan: progressedPlan);
+      readiness: base.readiness,
+      workoutPlan: progressedPlan,
+      intelAnalysis: base.intelAnalysis,
+      intelAdjustment: base.intelAdjustment,
+    );
+  }
+
+  Future<RecommendationResponse> recommendWithIntelligence(
+      DailyCheckIn? checkIn) async {
+    if (checkIn == null || !_isValid(checkIn)) {
+      return _fallbackRecommendation();
+    }
+
+    final readiness = _readinessService.calculate(checkIn);
+    final checkInHistory =
+        await (_checkInHistoryLoader?.call() ?? _missionProgressService.loadCheckInHistory());
+    final missionHistory = await (_missionHistoryLoader?.call() ??
+        _missionProgressService.loadMissionRecordHistory());
+    final bundle = _intelligenceEngine.analyze(
+      checkIns: checkInHistory,
+      missionRecords: missionHistory,
+      windowDays: 7,
+    );
+    final mergedReadiness = mergeReadinessWithAdjustment(
+      readiness: readiness,
+      checkIn: checkIn,
+      adjustment: bundle.adjustment,
+    );
+    final explanations = _buildExplanations(
+      checkIn,
+      mergedReadiness,
+      analysis: bundle.analysis,
+      adjustment: bundle.adjustment,
+    );
+
+    final templateKey = _pickTemplate(checkIn, mergedReadiness, bundle.adjustment);
+    final plan = _planFromTemplate(
+      templateKey,
+      explanations: explanations,
+      includeWeightNote: checkIn.weightKg != null,
+      addStrengthSafety: mergedReadiness.focus == WorkoutFocus.strength ||
+          mergedReadiness.focus == WorkoutFocus.mixed,
+    );
+
+    return RecommendationResponse(
+      readiness: mergedReadiness,
+      workoutPlan: plan,
+      intelAnalysis: bundle.analysis,
+      intelAdjustment: bundle.adjustment,
+    );
   }
 
   bool _isValid(DailyCheckIn checkIn) {
@@ -87,7 +155,86 @@ class WorkoutRecommender {
     return RecommendationResponse(readiness: readiness, workoutPlan: plan);
   }
 
-  String _pickTemplate(DailyCheckIn checkIn, ReadinessResult readiness) {
+  ReadinessResult mergeReadinessWithAdjustment({
+    required ReadinessResult readiness,
+    required DailyCheckIn checkIn,
+    required ZenithAdjustment adjustment,
+  }) {
+    var lane = readiness.lane;
+    var focus = readiness.focus;
+    var duration = readiness.durationMinutes + adjustment.durationDeltaMin;
+    final riskFlags = [...readiness.riskFlags];
+
+    if (adjustment.preferRecovery &&
+        (lane.index > TrainingLane.recovery.index)) {
+      lane = TrainingLane.values[lane.index - 1];
+      riskFlags.add('Intel analysis favored recovery over current load.');
+    }
+
+    if (adjustment.restrictHighIntensity && lane == TrainingLane.hard) {
+      lane = TrainingLane.moderate;
+      riskFlags.add('Intel analysis restricted high intensity.');
+    }
+
+    if (adjustment.laneOverrideSuggestion != null) {
+      final overrideLane =
+          _laneFromBias(adjustment.laneOverrideSuggestion!, fallback: lane);
+      if (overrideLane.index < lane.index) {
+        lane = overrideLane;
+      }
+    }
+
+    if (adjustment.laneNudge != 0) {
+      final nextIndex = (lane.index + adjustment.laneNudge)
+          .clamp(TrainingLane.recovery.index, TrainingLane.hard.index);
+      lane = TrainingLane.values[nextIndex];
+    }
+
+    if (checkIn.sleepHours < 6 ||
+        checkIn.energy <= 3 ||
+        checkIn.puffiness >= 4) {
+      if (lane == TrainingLane.hard) {
+        lane = TrainingLane.moderate;
+      }
+    }
+    if (checkIn.energy <= 2) {
+      lane = TrainingLane.recovery;
+      duration = duration > 20 ? 20 : duration;
+    }
+    if (adjustment.restrictHighIntensity && lane == TrainingLane.hard) {
+      lane = TrainingLane.moderate;
+    }
+
+    final suggestedFocus = adjustment.focusSuggestion == null
+        ? null
+        : _focusFromBias(adjustment.focusSuggestion!, fallback: focus);
+    if (suggestedFocus != null) {
+      if (adjustment.preferRecovery &&
+          (suggestedFocus == WorkoutFocus.mobility ||
+              suggestedFocus == WorkoutFocus.mixed)) {
+        focus = suggestedFocus;
+      } else if (!adjustment.preferRecovery) {
+        focus = suggestedFocus;
+      }
+    } else {
+      focus = _defaultFocusForLane(lane, focus);
+    }
+
+    duration = _clampDurationForLane(lane, duration);
+
+    return readiness.copyWith(
+      lane: lane,
+      focus: focus,
+      durationMinutes: duration,
+      riskFlags: riskFlags,
+    );
+  }
+
+  String _pickTemplate(
+    DailyCheckIn checkIn,
+    ReadinessResult readiness,
+    ZenithAdjustment? adjustment,
+  ) {
     if (checkIn.puffiness >= 4) {
       if (readiness.focus == WorkoutFocus.mobility) {
         return templateMobilityRecovery;
@@ -101,7 +248,8 @@ class WorkoutRecommender {
       case WorkoutFocus.cardio:
         return templateZone2;
       case WorkoutFocus.mixed:
-        return readiness.lane == TrainingLane.hard
+        return readiness.lane == TrainingLane.hard &&
+                !(adjustment?.restrictHighIntensity ?? false)
             ? templateStrengthB
             : templateMixedLight;
       case WorkoutFocus.strength:
@@ -112,7 +260,11 @@ class WorkoutRecommender {
   }
 
   List<String> _buildExplanations(
-      DailyCheckIn checkIn, ReadinessResult readiness) {
+    DailyCheckIn checkIn,
+    ReadinessResult readiness, {
+    ZenithAnalysisResult? analysis,
+    ZenithAdjustment? adjustment,
+  }) {
     final explanations = <String>[
       'Readiness score ${readiness.readinessScore} computed from energy, sleep, mood, puffiness, and discipline chain.',
       'Training lane set to ${readiness.lane.label.toLowerCase()} based on readiness mapping and safety guardrails.',
@@ -146,7 +298,83 @@ class WorkoutRecommender {
             'Focus selected: mixed work to balance strength and conditioning safely.');
     }
 
+    if (analysis != null) {
+      explanations.add('INTEL // ${analysis.summaryTitle}. ${analysis.summaryText}');
+      explanations.addAll(analysis.sourceSignals.take(2).map((item) => 'INTEL SIGNAL // $item'));
+    }
+
+    if (adjustment != null && adjustment.durationDeltaMin != 0) {
+      explanations.add(
+        'INTEL ADJUSTMENT // Protocol duration ${adjustment.durationDeltaMin > 0 ? 'extended' : 'reduced'} by ${adjustment.durationDeltaMin.abs()} min.',
+      );
+    }
+
     return explanations;
+  }
+
+  TrainingLane _laneFromBias(
+    ZenithLaneBias bias, {
+    required TrainingLane fallback,
+  }) {
+    switch (bias) {
+      case ZenithLaneBias.recovery:
+        return TrainingLane.recovery;
+      case ZenithLaneBias.light:
+        return TrainingLane.light;
+      case ZenithLaneBias.moderate:
+        return TrainingLane.moderate;
+      case ZenithLaneBias.hard:
+        return TrainingLane.hard;
+      case ZenithLaneBias.none:
+        return fallback;
+    }
+  }
+
+  WorkoutFocus _focusFromBias(
+    ZenithFocusBias bias, {
+    required WorkoutFocus fallback,
+  }) {
+    switch (bias) {
+      case ZenithFocusBias.mobility:
+        return WorkoutFocus.mobility;
+      case ZenithFocusBias.strength:
+        return WorkoutFocus.strength;
+      case ZenithFocusBias.mixed:
+        return WorkoutFocus.mixed;
+      case ZenithFocusBias.conditioning:
+        return WorkoutFocus.cardio;
+      case ZenithFocusBias.none:
+        return fallback;
+    }
+  }
+
+  WorkoutFocus _defaultFocusForLane(TrainingLane lane, WorkoutFocus current) {
+    switch (lane) {
+      case TrainingLane.recovery:
+        return WorkoutFocus.mobility;
+      case TrainingLane.light:
+        return current == WorkoutFocus.strength ? WorkoutFocus.mixed : current;
+      case TrainingLane.moderate:
+        return current;
+      case TrainingLane.hard:
+        return current == WorkoutFocus.mobility ? WorkoutFocus.mixed : current;
+    }
+  }
+
+  int _clampDurationForLane(TrainingLane lane, int duration) {
+    final min = switch (lane) {
+      TrainingLane.recovery => 15,
+      TrainingLane.light => 20,
+      TrainingLane.moderate => 30,
+      TrainingLane.hard => 40,
+    };
+    final max = switch (lane) {
+      TrainingLane.recovery => 20,
+      TrainingLane.light => 30,
+      TrainingLane.moderate => 40,
+      TrainingLane.hard => 50,
+    };
+    return duration.clamp(min, max);
   }
 
   WorkoutPlan _planFromTemplate(

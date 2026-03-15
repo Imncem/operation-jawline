@@ -526,75 +526,78 @@ class _ReminderTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: _surface,
-        border: Border.all(
-          color: enabled
-              ? _amber.withValues(alpha: 0.35)
-              : _dim.withValues(alpha: 0.4),
+    return GestureDetector(
+      onTap: () => onToggle(!enabled),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: _surface,
+          border: Border.all(
+            color: enabled
+                ? _amber.withValues(alpha: 0.35)
+                : _dim.withValues(alpha: 0.4),
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
-                tag,
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 9,
-                  color: enabled ? _amber.withValues(alpha: 0.55) : _dim,
-                  letterSpacing: 1,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  label,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  tag,
                   style: TextStyle(
                     fontFamily: 'monospace',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: enabled ? _text : _text.withValues(alpha: 0.6),
-                    letterSpacing: 2,
+                    fontSize: 9,
+                    color: enabled ? _amber.withValues(alpha: 0.55) : _dim,
+                    letterSpacing: 1,
                   ),
                 ),
-              ),
-              _TacticalSwitch(value: enabled),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'TIME // $timeLabel',
-            style: TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 10,
-              color: _text.withValues(alpha: 0.55),
-              letterSpacing: 1.4,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: enabled ? _text : _text.withValues(alpha: 0.6),
+                      letterSpacing: 2,
+                    ),
+                  ),
+                ),
+                _TacticalSwitch(value: enabled),
+              ],
             ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: _ActionButton(
-                  label: enabled ? 'DISABLE' : 'ENABLE',
-                  onTap: () => onToggle(!enabled),
-                ),
+            const SizedBox(height: 10),
+            Text(
+              'TIME // $timeLabel',
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 10,
+                color: _text.withValues(alpha: 0.55),
+                letterSpacing: 1.4,
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _ActionButton(
-                  label: 'CHANGE TIME',
-                  onTap: onChangeTime,
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: _ActionButton(
+                    label: enabled ? 'DISABLE' : 'ENABLE',
+                    onTap: () => onToggle(!enabled),
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ],
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _ActionButton(
+                    label: 'CHANGE TIME',
+                    onTap: onChangeTime,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

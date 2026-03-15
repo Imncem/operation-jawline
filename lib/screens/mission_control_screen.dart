@@ -5,14 +5,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../bloc/mission/mission_bloc.dart';
 import '../bloc/mission/mission_state.dart';
 import '../models/daily_check_in.dart';
+import '../providers/phase3_providers.dart';
 import '../progression/ranks.dart';
 import '../services/leveling.dart';
 import '../services/mission_progress_service.dart';
 import '../widgets/daily_mission_card.dart';
 import '../widgets/rise_in.dart';
+import '../widgets/weekly_objective_card.dart';
 import '../widgets/rank_badge.dart';
 import 'intel_report_screen.dart';
+import 'medals_screen.dart';
+import 'rank_ladder_screen.dart';
 import 'settings_screen.dart';
+import 'service_record_screen.dart';
 
 class MissionControlScreen extends StatelessWidget {
   const MissionControlScreen({super.key});
@@ -23,8 +28,8 @@ class MissionControlScreen extends StatelessWidget {
       builder: (context, state) {
         final snapshot = state.snapshot;
         final latest = snapshot.latestCheckIn;
-        final showChainAlert =
-            snapshot.chainCompromised && !_isSameCalendarDay(latest?.lastCheckIn);
+        final showChainAlert = snapshot.chainCompromised &&
+            !_isSameCalendarDay(latest?.lastCheckIn);
 
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
@@ -55,38 +60,51 @@ class MissionControlScreen extends StatelessWidget {
                   final level = progress?.level ?? snapshot.disciplineChain;
                   final rank = progress?.rankName ?? rankForLevel(level);
                   final toNext = levelsToNextRank(level);
-                  return _TacticalCard(
-                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            _CornerTag(label: 'RANK'),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: RankBadge(
-                                rank: rank,
-                                progress: inRankProgressForLevel(level),
-                                trailingText: 'LVL $level',
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          toNext == 0
-                              ? 'TOP RANK TIER'
-                              : '$toNext LEVEL(S) TO NEXT RANK',
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 8,
-                            color:
-                                const Color(0xFFCDD4C0).withValues(alpha: 0.55),
-                            letterSpacing: 1.2,
+                  return InkWell(
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => RankLadderScreen(
+                            currentLevel: level,
+                            currentRank: rank,
                           ),
                         ),
-                      ],
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(4),
+                    child: _TacticalCard(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              _CornerTag(label: 'RANK'),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: RankBadge(
+                                  rank: rank,
+                                  progress: inRankProgressForLevel(level),
+                                  trailingText: 'LVL $level',
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            toNext == 0
+                                ? 'TOP RANK TIER'
+                                : '$toNext LEVEL(S) TO NEXT RANK',
+                            style: TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 8,
+                              color: const Color(0xFFCDD4C0)
+                                  .withValues(alpha: 0.55),
+                              letterSpacing: 1.2,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 },
@@ -117,6 +135,21 @@ class MissionControlScreen extends StatelessWidget {
                       padding: EdgeInsets.symmetric(vertical: 8),
                       child: Center(child: CircularProgressIndicator()),
                     ),
+                    error: (_, __) => const SizedBox.shrink(),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
+            RiseIn(
+              delay: const Duration(milliseconds: 135),
+              child: Consumer(
+                builder: (context, ref, _) {
+                  final objectiveAsync = ref.watch(weeklyObjectiveProvider);
+                  return objectiveAsync.when(
+                    data: (objective) =>
+                        WeeklyObjectiveCard(objective: objective),
+                    loading: () => const SizedBox.shrink(),
                     error: (_, __) => const SizedBox.shrink(),
                   );
                 },
@@ -190,6 +223,38 @@ class MissionControlScreen extends StatelessWidget {
             const SizedBox(height: 20),
 
             // ── Footer timestamp ─────────────────────────────────────
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const ServiceRecordScreen(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.badge_outlined),
+                    label: const Text('Service Record'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const MedalsScreen(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.emoji_events_outlined),
+                    label: const Text('Medals'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
             Row(
               children: [
                 Expanded(

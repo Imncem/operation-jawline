@@ -1,4 +1,5 @@
 import 'workout_status.dart';
+import 'enums.dart';
 
 class DailyMissionRecord {
   const DailyMissionRecord({
@@ -11,6 +12,7 @@ class DailyMissionRecord {
     required this.workoutEffortRatio,
     required this.workoutStatus,
     required this.lastWorkoutUpdateTs,
+    required this.workoutLane,
   });
 
   factory DailyMissionRecord.empty(String dateKey) {
@@ -24,6 +26,7 @@ class DailyMissionRecord {
       workoutEffortRatio: 0,
       workoutStatus: WorkoutStatus.notStarted,
       lastWorkoutUpdateTs: 0,
+      workoutLane: null,
     );
   }
 
@@ -36,6 +39,7 @@ class DailyMissionRecord {
   final double workoutEffortRatio;
   final WorkoutStatus workoutStatus;
   final int lastWorkoutUpdateTs;
+  final TrainingLane? workoutLane;
 
   double get workoutPercent => workoutEffortRatio;
   bool get workoutSkipped => workoutStatus == WorkoutStatus.skipped;
@@ -50,6 +54,8 @@ class DailyMissionRecord {
     double? workoutEffortRatio,
     WorkoutStatus? workoutStatus,
     int? lastWorkoutUpdateTs,
+    TrainingLane? workoutLane,
+    bool clearWorkoutLane = false,
   }) {
     return DailyMissionRecord(
       dateKey: dateKey ?? this.dateKey,
@@ -61,6 +67,7 @@ class DailyMissionRecord {
       workoutEffortRatio: workoutEffortRatio ?? this.workoutEffortRatio,
       workoutStatus: workoutStatus ?? this.workoutStatus,
       lastWorkoutUpdateTs: lastWorkoutUpdateTs ?? this.lastWorkoutUpdateTs,
+      workoutLane: clearWorkoutLane ? null : (workoutLane ?? this.workoutLane),
     );
   }
 
@@ -75,6 +82,7 @@ class DailyMissionRecord {
       'workoutEffortRatio': workoutEffortRatio,
       'workoutStatus': workoutStatus.toJsonValue(),
       'lastWorkoutUpdateTs': lastWorkoutUpdateTs,
+      'workoutLane': workoutLane?.toJsonValue(),
     };
   }
 
@@ -100,6 +108,9 @@ class DailyMissionRecord {
           ? WorkoutStatusX.fromJsonValue(map['workoutStatus'] as String?)
           : fallbackStatus,
       lastWorkoutUpdateTs: map['lastWorkoutUpdateTs'] as int? ?? 0,
+      workoutLane: map['workoutLane'] == null
+          ? null
+          : TrainingLaneX.fromJsonValue(map['workoutLane'] as String),
     );
   }
 }

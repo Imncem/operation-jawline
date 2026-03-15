@@ -13,7 +13,7 @@ import '../services/sfx_service.dart';
 import '../session/session_step.dart';
 import '../services/workout_recommender.dart';
 import '../widgets/rise_in.dart';
-import 'protocol_active_screen.dart';
+import 'mission_briefing_screen.dart';
 
 // ── Palette constants ─────────────────────────────────────────────────────────
 const _amber = Color(0xFFD4A017);
@@ -138,6 +138,20 @@ class AIWorkoutScreen extends StatelessWidget {
                     icon: Icons.psychology_outlined,
                   ),
                 ),
+                if (recommendation.intelAdjustment != null &&
+                    recommendation.intelAnalysis != null) ...[
+                  const SizedBox(height: 16),
+                  _BulletsDivider(label: 'INTEL INFLUENCE'),
+                  const SizedBox(height: 10),
+                  RiseIn(
+                    delay: const Duration(milliseconds: 300),
+                    child: _TacticalBulletsCard(
+                      lines: _buildIntelInfluenceLines(recommendation),
+                      accent: _blue,
+                      icon: Icons.insights_outlined,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 28),
 
                 // ── CTA ──────────────────────────────────────────────────
@@ -151,6 +165,34 @@ class AIWorkoutScreen extends StatelessWidget {
         );
       },
     );
+  }
+
+  List<String> _buildIntelInfluenceLines(RecommendationResponse recommendation) {
+    final analysis = recommendation.intelAnalysis;
+    final adjustment = recommendation.intelAdjustment;
+    if (analysis == null || adjustment == null) {
+      return const [];
+    }
+
+    final lines = <String>[
+      ...analysis.sourceSignals.take(2).map((item) => item),
+    ];
+
+    if (adjustment.durationDeltaMin != 0) {
+      lines.add(
+        'Protocol duration ${adjustment.durationDeltaMin > 0 ? 'extended' : 'reduced'} by ${adjustment.durationDeltaMin.abs()} min.',
+      );
+    }
+
+    if (adjustment.restrictHighIntensity) {
+      lines.add('High-intensity work restricted by recent telemetry.');
+    }
+
+    if (lines.isEmpty) {
+      lines.add('Recent telemetry held the baseline lane with no major adjustment.');
+    }
+
+    return lines;
   }
 }
 
@@ -766,6 +808,7 @@ class _LaunchButtonState extends State<_LaunchButton> {
       plannedSec: widget.recommendation.readiness.durationMinutes * 60,
       actualSec: 0,
       status: WorkoutStatus.skipped,
+      lane: widget.recommendation.readiness.lane,
       force: true,
     );
     final update = await mission.recomputeAndAwardXP(DateTime.now());
@@ -786,8 +829,9 @@ class _LaunchButtonState extends State<_LaunchButton> {
 
     final result = await Navigator.of(context).push<SessionResult>(
       MaterialPageRoute(
-        builder: (_) =>
-            ProtocolActiveScreen(recommendation: widget.recommendation),
+        builder: (_) => MissionBriefingScreen(
+          recommendation: widget.recommendation,
+        ),
       ),
     );
 

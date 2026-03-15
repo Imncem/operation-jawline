@@ -1,5 +1,6 @@
 import 'package:equatable/equatable.dart';
 
+import '../models/enums.dart';
 import '../models/workout_status.dart';
 
 enum SessionStepKind { timed, set, rest }
@@ -79,6 +80,7 @@ class SessionResult extends Equatable {
     required this.actualSec,
     required this.effortRatio,
     required this.status,
+    this.lane,
   });
 
   final int totalSteps;
@@ -90,6 +92,7 @@ class SessionResult extends Equatable {
   final int actualSec;
   final double effortRatio;
   final WorkoutStatus status;
+  final TrainingLane? lane;
 
   @override
   List<Object?> get props => [
@@ -102,5 +105,6 @@ class SessionResult extends Equatable {
         actualSec,
         effortRatio,
         status,
+        lane,
       ];
 }

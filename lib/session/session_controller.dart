@@ -55,6 +55,7 @@ class SessionState {
               actualSec: 0,
               effortRatio: 0,
               status: WorkoutStatus.notStarted,
+              lane: null,
             )
           : null,
     );
@@ -328,6 +329,7 @@ class SessionController extends ChangeNotifier {
       actualSec: _state.actualWorkoutSec,
       effortRatio: ratio,
       status: status,
+      lane: null,
     );
   }
 

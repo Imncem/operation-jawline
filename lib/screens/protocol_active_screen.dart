@@ -211,6 +211,7 @@ class _ProtocolActiveScreenState extends State<ProtocolActiveScreen>
         plannedSec: s.plannedWorkoutSec,
         actualSec: s.actualWorkoutSec,
         status: status,
+        lane: widget.recommendation.readiness.lane,
       );
       final update = await mission.recomputeAndAwardXP(DateTime.now());
       _lastMissionSyncAt = DateTime.now();
@@ -267,10 +268,22 @@ class _ProtocolActiveScreenState extends State<ProtocolActiveScreen>
 
         if (state.isCompleted && state.result != null && !_completionRouted) {
           _completionRouted = true;
+          final routedResult = SessionResult(
+            totalSteps: state.result!.totalSteps,
+            completedSteps: state.result!.completedSteps,
+            skippedSteps: state.result!.skippedSteps,
+            totalElapsedSec: state.result!.totalElapsedSec,
+            completionPercent: state.result!.completionPercent,
+            plannedSec: state.result!.plannedSec,
+            actualSec: state.result!.actualSec,
+            effortRatio: state.result!.effortRatio,
+            status: state.result!.status,
+            lane: widget.recommendation.readiness.lane,
+          );
           WidgetsBinding.instance.addPostFrameCallback((_) {
             Navigator.of(context).pushReplacement(
               MaterialPageRoute(
-                builder: (_) => ProtocolCompleteScreen(result: state.result!),
+                builder: (_) => ProtocolCompleteScreen(result: routedResult),
               ),
             );
           });

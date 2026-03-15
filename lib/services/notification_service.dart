@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
@@ -83,7 +84,7 @@ class NotificationService {
     await _scheduleDailyReminder(
       id: workoutReminderId,
       title: 'Protocol pending',
-      body: 'Recruit, execute today\'s training protocol. Keep it steady.',
+      body: await _buildWorkoutBody(),
       hour: settings.workoutReminderHour,
       minute: settings.workoutReminderMinute,
       startTomorrow: startTomorrow,
@@ -97,7 +98,7 @@ class NotificationService {
     await _scheduleDailyReminder(
       id: checkInReminderId,
       title: 'Status report due',
-      body: 'Log your check-in to protect your discipline chain.',
+      body: await _buildCheckInBody(),
       hour: settings.checkInReminderHour,
       minute: settings.checkInReminderMinute,
       startTomorrow: startTomorrow,
@@ -220,5 +221,47 @@ class NotificationService {
         priority: Priority.high,
       ),
     );
+  }
+
+  Future<String> _buildWorkoutBody() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('daily_checkin_history_v1');
+      if (raw != null && raw.contains('"energy"')) {
+        if (raw.contains('"energy":1') ||
+            raw.contains('"energy":2') ||
+            raw.contains('"energy":3') ||
+            raw.contains('"sleepHours":5') ||
+            raw.contains('"puffiness":4') ||
+            raw.contains('"puffiness":5')) {
+          return 'Recovery lane is acceptable today. Execute a lighter protocol and keep the chain alive.';
+        }
+      }
+    } catch (e) {
+      debugPrint('[NotificationService] workout message fallback: $e');
+    }
+    return 'Recruit, execute today\'s training protocol. Keep it steady.';
+  }
+
+  Future<String> _buildCheckInBody() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userRaw = prefs.getString('user_progress_v1');
+      final recordsRaw = prefs.getString('daily_mission_records_v1');
+      if ((recordsRaw == null || !recordsRaw.contains(_todayKey())) &&
+          userRaw != null &&
+          userRaw.contains('"disciplineChain":') &&
+          !userRaw.contains('"disciplineChain":0')) {
+        return 'Discipline chain at risk. Log today\'s check-in before the window closes.';
+      }
+    } catch (e) {
+      debugPrint('[NotificationService] check-in message fallback: $e');
+    }
+    return 'Log your check-in to protect your discipline chain.';
+  }
+
+  String _todayKey() {
+    final now = DateTime.now();
+    return '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
   }
 }
